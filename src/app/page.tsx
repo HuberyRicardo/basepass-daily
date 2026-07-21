@@ -19,7 +19,6 @@ import {
   useDisconnect,
   useReadContract,
   useReadContracts,
-  useSignTypedData,
   useSwitchChain,
   useWaitForTransactionReceipt,
   useWriteContract,
@@ -90,16 +89,6 @@ const rewardPreview: Reward[] = [
   },
 ];
 
-const gaslessEnabled = process.env.NEXT_PUBLIC_GASLESS_ENABLED === "true";
-const typedDataDomain = contractAddress
-  ? {
-      name: "BasePassDaily",
-      version: "1",
-      chainId: 8453,
-      verifyingContract: contractAddress,
-    }
-  : undefined;
-
 function shortAddress(address?: string) {
   if (!address) return "Not connected";
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
@@ -121,10 +110,6 @@ function numberPoints(value?: number) {
   return (value ?? 0).toLocaleString("en-US");
 }
 
-function signatureDeadline() {
-  return BigInt(Math.floor(Date.now() / 1000) + 900);
-}
-
 export default function Home() {
   const [showWallets, setShowWallets] = useState(false);
   const [localStats, setLocalStats] = useState<LocalStats>(emptyLocalStats);
@@ -138,7 +123,6 @@ export default function Home() {
   const { connect, isPending: isConnecting } = useConnect();
   const { disconnect } = useDisconnect();
   const { switchChainAsync } = useSwitchChain();
-  const { signTypedDataAsync, isPending: isSigning } = useSignTypedData();
   const { writeContract, data: hash, isPending: isWriting, error: writeError, reset } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash, config });
 
@@ -226,17 +210,6 @@ export default function Home() {
     },
   });
 
-  const nonce = useReadContract({
-    config,
-    address: contractAddress ?? zeroAddress,
-    abi: basePassDailyAbi,
-    functionName: "nonces",
-    args: address ? [address] : undefined,
-    query: {
-      enabled: Boolean(address) && isOnchainMode && gaslessEnabled,
-    },
-  });
-
   const rewardIds = useMemo(() => {
     const count = rewardCount.data ? Number(rewardCount.data) : 0;
     return Array.from({ length: Math.min(count, 6) }, (_, id) => id);
@@ -264,8 +237,7 @@ export default function Home() {
     void raffleRound.refetch();
     void lastWinner.refetch();
     void raffleEntryCost.refetch();
-    void nonce.refetch();
-  }, [isSuccess, lastWinner, nonce, raffleEntryCost, raffleRound, rewardCount, rewardReads, userReads]);
+  }, [isSuccess, lastWinner, raffleEntryCost, raffleRound, rewardCount, rewardReads, userReads]);
 
   useEffect(() => {
     if (!address || isOnchainMode) {
@@ -329,91 +301,6 @@ export default function Home() {
     await switchChainAsync({ chainId: 8453 });
   }
 
-  async function relay(body: Record<string, string>) {
-    const response = await fetch("/api/relay", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const result = (await response.json()) as { hash?: `0x${string}`; error?: string };
-    if (!response.ok || !result.hash) throw new Error(result.error ?? "Relay failed.");
-    await userReads.refetch();
-    await rewardReads.refetch();
-    await nonce.refetch();
-  }
-
-  async function gaslessClaim(user: `0x${string}`) {
-    if (!typedDataDomain) return;
-    const deadline = signatureDeadline();
-    const signature = await signTypedDataAsync({
-      domain: typedDataDomain,
-      primaryType: "ClaimDailyPass",
-      types: {
-        ClaimDailyPass: [
-          { name: "user", type: "address" },
-          { name: "referrer", type: "address" },
-          { name: "nonce", type: "uint256" },
-          { name: "deadline", type: "uint256" },
-        ],
-      },
-      message: {
-        user,
-        referrer,
-        nonce: nonce.data ?? 0n,
-        deadline,
-      },
-    });
-    await relay({ action: "claim", user, referrer, deadline: deadline.toString(), signature });
-  }
-
-  async function gaslessRedeem(user: `0x${string}`, rewardId: number) {
-    if (!typedDataDomain) return;
-    const deadline = signatureDeadline();
-    const signature = await signTypedDataAsync({
-      domain: typedDataDomain,
-      primaryType: "RedeemReward",
-      types: {
-        RedeemReward: [
-          { name: "user", type: "address" },
-          { name: "rewardId", type: "uint256" },
-          { name: "nonce", type: "uint256" },
-          { name: "deadline", type: "uint256" },
-        ],
-      },
-      message: {
-        user,
-        rewardId: BigInt(rewardId),
-        nonce: nonce.data ?? 0n,
-        deadline,
-      },
-    });
-    await relay({ action: "redeem", user, rewardId: String(rewardId), deadline: deadline.toString(), signature });
-  }
-
-  async function gaslessRaffle(user: `0x${string}`) {
-    if (!typedDataDomain) return;
-    const deadline = signatureDeadline();
-    const signature = await signTypedDataAsync({
-      domain: typedDataDomain,
-      primaryType: "EnterRaffle",
-      types: {
-        EnterRaffle: [
-          { name: "user", type: "address" },
-          { name: "entries", type: "uint256" },
-          { name: "nonce", type: "uint256" },
-          { name: "deadline", type: "uint256" },
-        ],
-      },
-      message: {
-        user,
-        entries: 1n,
-        nonce: nonce.data ?? 0n,
-        deadline,
-      },
-    });
-    await relay({ action: "raffle", user, entries: "1", deadline: deadline.toString(), signature });
-  }
-
   async function claimPass() {
     if (!isConnected || !address || claimedToday) return;
     if (!isOnchainMode) {
@@ -433,10 +320,6 @@ export default function Home() {
       return;
     }
     if (!contractAddress) return;
-    if (gaslessEnabled) {
-      await gaslessClaim(address);
-      return;
-    }
     reset();
     await ensureBaseChain();
     writeContract({
@@ -449,7 +332,7 @@ export default function Home() {
   }
 
   async function redeemReward(rewardId: number) {
-    if (!isConnected || !address) return;
+    if (!isConnected) return;
     if (!isOnchainMode) {
       const reward = visibleRewards.find((item) => item.id === rewardId);
       if (!reward) return;
@@ -466,10 +349,6 @@ export default function Home() {
       return;
     }
     if (!contractAddress) return;
-    if (gaslessEnabled) {
-      await gaslessRedeem(address, rewardId);
-      return;
-    }
     reset();
     await ensureBaseChain();
     writeContract({
@@ -482,7 +361,7 @@ export default function Home() {
   }
 
   async function enterRaffle() {
-    if (!isConnected || !address) return;
+    if (!isConnected) return;
     if (!isOnchainMode) {
       setLocalStats((stats) => {
         if (stats.rewardPoints < 20) return stats;
@@ -495,10 +374,6 @@ export default function Home() {
       return;
     }
     if (!contractAddress) return;
-    if (gaslessEnabled) {
-      await gaslessRaffle(address);
-      return;
-    }
     reset();
     await ensureBaseChain();
     writeContract({
@@ -521,7 +396,7 @@ export default function Home() {
   }
 
   const mainButtonLabel = !isConnected ? "Connect Wallet" : claimedToday ? "Claimed Today" : "Claim Daily Pass";
-  const isBusy = isConnecting || isWriting || isConfirming || isSigning;
+  const isBusy = isConnecting || isWriting || isConfirming;
 
   return (
     <main className="min-h-screen bg-[#08090c] text-white">
@@ -592,11 +467,6 @@ export default function Home() {
             {!isOnchainMode ? (
               <p className="mt-3 text-xs leading-5 text-[#ffcf7a]">
                 Gas-free local mode is active. Add a contract address to enable onchain passes.
-              </p>
-            ) : null}
-            {isOnchainMode && gaslessEnabled ? (
-              <p className="mt-3 text-xs leading-5 text-[#9ee7cf]">
-                Gasless mode is active. You sign, the app pays gas.
               </p>
             ) : null}
             {writeError ? <p className="mt-3 text-xs leading-5 text-[#ff8d8d]">{writeError.message}</p> : null}

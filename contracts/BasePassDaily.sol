@@ -29,17 +29,8 @@ contract BasePassDaily {
     mapping(uint256 => Reward) public rewards;
     mapping(address => uint256) public raffleEntries;
     mapping(uint256 => address[]) private rafflePlayers;
-    mapping(address => uint256) public nonces;
 
     uint256 public rewardCount;
-
-    bytes32 public constant CLAIM_TYPEHASH =
-        keccak256("ClaimDailyPass(address user,address referrer,uint256 nonce,uint256 deadline)");
-    bytes32 public constant REDEEM_TYPEHASH =
-        keccak256("RedeemReward(address user,uint256 rewardId,uint256 nonce,uint256 deadline)");
-    bytes32 public constant RAFFLE_TYPEHASH =
-        keccak256("EnterRaffle(address user,uint256 entries,uint256 nonce,uint256 deadline)");
-    bytes32 private immutable domainSeparator;
 
     event DailyPassClaimed(
         address indexed user,
@@ -87,8 +78,6 @@ contract BasePassDaily {
     error InsufficientPoints();
     error NoRaffleEntries();
     error InvalidOwner();
-    error SignatureExpired();
-    error InvalidSignature();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -103,67 +92,41 @@ contract BasePassDaily {
     constructor() {
         owner = msg.sender;
         raffleRound = 1;
-        domainSeparator = keccak256(
-            abi.encode(
-                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                keccak256(bytes("BasePassDaily")),
-                keccak256(bytes("1")),
-                block.chainid,
-                address(this)
-            )
-        );
         emit OwnershipTransferred(address(0), msg.sender);
     }
 
     function claimDailyPass(address referrer) external whenNotPaused {
-        _claimDailyPass(msg.sender, referrer);
-    }
-
-    function claimDailyPassFor(address user, address referrer, uint256 deadline, bytes calldata signature)
-        external
-        whenNotPaused
-    {
-        _verify(
-            user,
-            keccak256(abi.encode(CLAIM_TYPEHASH, user, referrer, nonces[user]++, deadline)),
-            deadline,
-            signature
-        );
-        _claimDailyPass(user, referrer);
-    }
-
-    function _claimDailyPass(address user, address referrer) private {
         uint256 today = block.timestamp / 1 days;
-        if (lastCheckInDay[user] == today) revert AlreadyClaimedToday();
+        if (lastCheckInDay[msg.sender] == today) revert AlreadyClaimedToday();
 
         uint256 pointsAwarded = dailyPassPoints;
-        if (lastCheckInDay[user] + 1 == today) {
-            checkInStreak[user] += 1;
+        if (lastCheckInDay[msg.sender] + 1 == today) {
+            checkInStreak[msg.sender] += 1;
         } else {
-            checkInStreak[user] = 1;
+            checkInStreak[msg.sender] = 1;
         }
 
-        if (checkInStreak[user] > 1) {
+        if (checkInStreak[msg.sender] > 1) {
             pointsAwarded += streakBonusPoints;
         }
 
-        bool firstCheckIn = walletCheckInCount[user] == 0;
+        bool firstCheckIn = walletCheckInCount[msg.sender] == 0;
         if (
             firstCheckIn &&
             referrer != address(0) &&
-            referrer != user &&
-            referralOf[user] == address(0)
+            referrer != msg.sender &&
+            referralOf[msg.sender] == address(0)
         ) {
-            referralOf[user] = referrer;
+            referralOf[msg.sender] = referrer;
             rewardPoints[referrer] += referralInviterPoints;
             pointsAwarded += referralInviteePoints;
         }
 
-        walletCheckInCount[user] += 1;
-        rewardPoints[user] += pointsAwarded;
-        lastCheckInDay[user] = today;
+        walletCheckInCount[msg.sender] += 1;
+        rewardPoints[msg.sender] += pointsAwarded;
+        lastCheckInDay[msg.sender] = today;
 
-        emit DailyPassClaimed(user, referralOf[user], today, pointsAwarded, checkInStreak[user]);
+        emit DailyPassClaimed(msg.sender, referralOf[msg.sender], today, pointsAwarded, checkInStreak[msg.sender]);
     }
 
     function createReward(
@@ -193,65 +156,31 @@ contract BasePassDaily {
     }
 
     function redeemReward(uint256 rewardId) external whenNotPaused {
-        _redeemReward(msg.sender, rewardId);
-    }
-
-    function redeemRewardFor(address user, uint256 rewardId, uint256 deadline, bytes calldata signature)
-        external
-        whenNotPaused
-    {
-        _verify(
-            user,
-            keccak256(abi.encode(REDEEM_TYPEHASH, user, rewardId, nonces[user]++, deadline)),
-            deadline,
-            signature
-        );
-        _redeemReward(user, rewardId);
-    }
-
-    function _redeemReward(address user, uint256 rewardId) private {
         if (rewardId >= rewardCount) revert InvalidReward();
         Reward storage reward = rewards[rewardId];
         if (!reward.active) revert RewardInactive();
         if (reward.stock == 0) revert RewardOutOfStock();
-        if (rewardPoints[user] < reward.pointCost) revert InsufficientPoints();
+        if (rewardPoints[msg.sender] < reward.pointCost) revert InsufficientPoints();
 
-        rewardPoints[user] -= reward.pointCost;
+        rewardPoints[msg.sender] -= reward.pointCost;
         reward.stock -= 1;
 
-        emit RewardRedeemed(user, rewardId, reward.pointCost);
+        emit RewardRedeemed(msg.sender, rewardId, reward.pointCost);
     }
 
     function enterRaffle(uint256 entries) external whenNotPaused {
-        _enterRaffle(msg.sender, entries);
-    }
-
-    function enterRaffleFor(address user, uint256 entries, uint256 deadline, bytes calldata signature)
-        external
-        whenNotPaused
-    {
-        _verify(
-            user,
-            keccak256(abi.encode(RAFFLE_TYPEHASH, user, entries, nonces[user]++, deadline)),
-            deadline,
-            signature
-        );
-        _enterRaffle(user, entries);
-    }
-
-    function _enterRaffle(address user, uint256 entries) private {
         if (entries == 0) revert NoRaffleEntries();
         uint256 totalCost = raffleEntryCost * entries;
-        if (rewardPoints[user] < totalCost) revert InsufficientPoints();
+        if (rewardPoints[msg.sender] < totalCost) revert InsufficientPoints();
 
-        rewardPoints[user] -= totalCost;
-        raffleEntries[user] += entries;
+        rewardPoints[msg.sender] -= totalCost;
+        raffleEntries[msg.sender] += entries;
 
         for (uint256 i = 0; i < entries; i++) {
-            rafflePlayers[raffleRound].push(user);
+            rafflePlayers[raffleRound].push(msg.sender);
         }
 
-        emit RaffleEntered(user, raffleRound, entries);
+        emit RaffleEntered(msg.sender, raffleRound, entries);
     }
 
     function drawRaffleWinner() external onlyOwner returns (address winner) {
@@ -313,35 +242,5 @@ contract BasePassDaily {
 
     function getRafflePlayers(uint256 round) external view returns (address[] memory) {
         return rafflePlayers[round];
-    }
-
-    function DOMAIN_SEPARATOR() external view returns (bytes32) {
-        return domainSeparator;
-    }
-
-    function _verify(address signer, bytes32 structHash, uint256 deadline, bytes calldata signature) private view {
-        if (block.timestamp > deadline) revert SignatureExpired();
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
-        if (_recover(digest, signature) != signer) revert InvalidSignature();
-    }
-
-    function _recover(bytes32 digest, bytes calldata signature) private pure returns (address recovered) {
-        if (signature.length != 65) revert InvalidSignature();
-
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-
-        assembly {
-            r := calldataload(signature.offset)
-            s := calldataload(add(signature.offset, 0x20))
-            v := byte(0, calldataload(add(signature.offset, 0x40)))
-        }
-
-        if (v < 27) v += 27;
-        if (v != 27 && v != 28) revert InvalidSignature();
-
-        recovered = ecrecover(digest, v, r, s);
-        if (recovered == address(0)) revert InvalidSignature();
     }
 }
