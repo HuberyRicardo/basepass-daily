@@ -42,6 +42,26 @@ type Reward = {
   active: boolean;
 };
 
+type LocalStats = {
+  checkInCount: number;
+  rewardPoints: number;
+  lastCheckInDay: number;
+  streak: number;
+  raffleEntries: number;
+  claimedReferral: boolean;
+  rewardStock: Record<string, number>;
+};
+
+const emptyLocalStats: LocalStats = {
+  checkInCount: 0,
+  rewardPoints: 0,
+  lastCheckInDay: 0,
+  streak: 0,
+  raffleEntries: 0,
+  claimedReferral: false,
+  rewardStock: {},
+};
+
 const rewardPreview: Reward[] = [
   {
     id: 0,
@@ -78,12 +98,21 @@ function currentDay() {
   return BigInt(Math.floor(Date.now() / 1000 / 86_400));
 }
 
+function currentDayNumber() {
+  return Math.floor(Date.now() / 1000 / 86_400);
+}
+
 function points(value?: bigint) {
   return value ? Number(formatUnits(value, 0)).toLocaleString("en-US") : "0";
 }
 
+function numberPoints(value?: number) {
+  return (value ?? 0).toLocaleString("en-US");
+}
+
 export default function Home() {
   const [showWallets, setShowWallets] = useState(false);
+  const [localStats, setLocalStats] = useState<LocalStats>(emptyLocalStats);
   const [referrer] = useState<`0x${string}`>(() => {
     if (typeof window === "undefined") return zeroAddress;
     const value = new URLSearchParams(window.location.search).get("ref");
@@ -97,13 +126,13 @@ export default function Home() {
   const { writeContract, data: hash, isPending: isWriting, error: writeError, reset } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash, config });
 
-  const isReadyForContract = contractAddress !== zeroAddress;
+  const isOnchainMode = Boolean(contractAddress);
 
   const userReads = useReadContracts({
     config,
     allowFailure: false,
     query: {
-      enabled: Boolean(address) && isReadyForContract,
+      enabled: Boolean(address) && isOnchainMode,
     },
     contracts: address
       ? [
@@ -143,41 +172,41 @@ export default function Home() {
 
   const rewardCount = useReadContract({
     config,
-    address: contractAddress,
+    address: contractAddress ?? zeroAddress,
     abi: basePassDailyAbi,
     functionName: "rewardCount",
     query: {
-      enabled: isReadyForContract,
+      enabled: isOnchainMode,
     },
   });
 
   const raffleRound = useReadContract({
     config,
-    address: contractAddress,
+    address: contractAddress ?? zeroAddress,
     abi: basePassDailyAbi,
     functionName: "raffleRound",
     query: {
-      enabled: isReadyForContract,
+      enabled: isOnchainMode,
     },
   });
 
   const lastWinner = useReadContract({
     config,
-    address: contractAddress,
+    address: contractAddress ?? zeroAddress,
     abi: basePassDailyAbi,
     functionName: "lastRaffleWinner",
     query: {
-      enabled: isReadyForContract,
+      enabled: isOnchainMode,
     },
   });
 
   const raffleEntryCost = useReadContract({
     config,
-    address: contractAddress,
+    address: contractAddress ?? zeroAddress,
     abi: basePassDailyAbi,
     functionName: "raffleEntryCost",
     query: {
-      enabled: isReadyForContract,
+      enabled: isOnchainMode,
     },
   });
 
@@ -190,10 +219,10 @@ export default function Home() {
     config,
     allowFailure: true,
     query: {
-      enabled: isReadyForContract && rewardIds.length > 0,
+      enabled: isOnchainMode && rewardIds.length > 0,
     },
     contracts: rewardIds.map((id) => ({
-      address: contractAddress,
+      address: contractAddress ?? zeroAddress,
       abi: basePassDailyAbi,
       functionName: "getReward",
       args: [BigInt(id)],
@@ -210,11 +239,35 @@ export default function Home() {
     void raffleEntryCost.refetch();
   }, [isSuccess, lastWinner, raffleEntryCost, raffleRound, rewardCount, rewardReads, userReads]);
 
-  const [checkInCount = 0n, rewardPointBalance = 0n, lastCheckInDay = 0n, streak = 0n, entries = 0n] =
+  useEffect(() => {
+    if (!address || isOnchainMode) {
+      queueMicrotask(() => setLocalStats(emptyLocalStats));
+      return;
+    }
+
+    const stored = window.localStorage.getItem(`basepass-daily:${address.toLowerCase()}`);
+    queueMicrotask(() =>
+      setLocalStats(stored ? ({ ...emptyLocalStats, ...JSON.parse(stored) } as LocalStats) : emptyLocalStats),
+    );
+  }, [address, isOnchainMode]);
+
+  useEffect(() => {
+    if (!address || isOnchainMode) return;
+    window.localStorage.setItem(`basepass-daily:${address.toLowerCase()}`, JSON.stringify(localStats));
+  }, [address, isOnchainMode, localStats]);
+
+  const [onchainCheckInCount = 0n, onchainRewardPointBalance = 0n, onchainLastCheckInDay = 0n, onchainStreak = 0n, onchainEntries = 0n] =
     userReads.data ?? [];
 
-  const claimedToday = isConnected && lastCheckInDay === currentDay();
+  const claimedToday = isConnected && (isOnchainMode ? onchainLastCheckInDay === currentDay() : localStats.lastCheckInDay === currentDayNumber());
   const inviteLink = address && origin ? `${origin}/?ref=${address}` : "Connect wallet to create your link";
+  const checkInCount = isOnchainMode ? points(onchainCheckInCount) : numberPoints(localStats.checkInCount);
+  const rewardPointBalance = isOnchainMode ? points(onchainRewardPointBalance) : numberPoints(localStats.rewardPoints);
+  const streak = isOnchainMode ? points(onchainStreak) : numberPoints(localStats.streak);
+  const entries = isOnchainMode ? points(onchainEntries) : numberPoints(localStats.raffleEntries);
+  const raffleRoundValue = isOnchainMode ? points(raffleRound.data) : "Local";
+  const raffleEntryCostValue = isOnchainMode ? `${points(raffleEntryCost.data)} pts` : "20 pts";
+  const lastWinnerValue = isOnchainMode ? shortAddress(lastWinner.data) : "Local draw";
 
   const rewards = useMemo<Reward[]>(() => {
     if (!rewardReads.data?.length) return rewardPreview;
@@ -234,13 +287,39 @@ export default function Home() {
       .filter((reward): reward is Reward => Boolean(reward));
   }, [rewardIds, rewardReads.data]);
 
+  const visibleRewards = useMemo(
+    () =>
+      rewards.map((reward) => ({
+        ...reward,
+        stock: isOnchainMode ? reward.stock : BigInt(localStats.rewardStock[String(reward.id)] ?? Number(reward.stock)),
+      })),
+    [isOnchainMode, localStats.rewardStock, rewards],
+  );
+
   async function ensureBaseChain() {
     if (chainId === 8453) return;
     await switchChainAsync({ chainId: 8453 });
   }
 
   async function claimPass() {
-    if (!isConnected || !address || claimedToday || !isReadyForContract) return;
+    if (!isConnected || !address || claimedToday) return;
+    if (!isOnchainMode) {
+      setLocalStats((stats) => {
+        const today = currentDayNumber();
+        const nextStreak = stats.lastCheckInDay + 1 === today ? stats.streak + 1 : 1;
+        const referralBonus = !stats.claimedReferral && referrer !== zeroAddress && referrer.toLowerCase() !== address.toLowerCase();
+        return {
+          ...stats,
+          checkInCount: stats.checkInCount + 1,
+          rewardPoints: stats.rewardPoints + 10 + (nextStreak > 1 ? 2 : 0) + (referralBonus ? 15 : 0),
+          lastCheckInDay: today,
+          streak: nextStreak,
+          claimedReferral: stats.claimedReferral || referralBonus,
+        };
+      });
+      return;
+    }
+    if (!contractAddress) return;
     reset();
     await ensureBaseChain();
     writeContract({
@@ -253,7 +332,23 @@ export default function Home() {
   }
 
   async function redeemReward(rewardId: number) {
-    if (!isConnected || !isReadyForContract) return;
+    if (!isConnected) return;
+    if (!isOnchainMode) {
+      const reward = visibleRewards.find((item) => item.id === rewardId);
+      if (!reward) return;
+      setLocalStats((stats) => {
+        const stock = stats.rewardStock[String(rewardId)] ?? Number(reward.stock);
+        const cost = Number(reward.pointCost);
+        if (stats.rewardPoints < cost || stock < 1) return stats;
+        return {
+          ...stats,
+          rewardPoints: stats.rewardPoints - cost,
+          rewardStock: { ...stats.rewardStock, [rewardId]: stock - 1 },
+        };
+      });
+      return;
+    }
+    if (!contractAddress) return;
     reset();
     await ensureBaseChain();
     writeContract({
@@ -266,7 +361,19 @@ export default function Home() {
   }
 
   async function enterRaffle() {
-    if (!isConnected || !isReadyForContract) return;
+    if (!isConnected) return;
+    if (!isOnchainMode) {
+      setLocalStats((stats) => {
+        if (stats.rewardPoints < 20) return stats;
+        return {
+          ...stats,
+          rewardPoints: stats.rewardPoints - 20,
+          raffleEntries: stats.raffleEntries + 1,
+        };
+      });
+      return;
+    }
+    if (!contractAddress) return;
     reset();
     await ensureBaseChain();
     writeContract({
@@ -334,14 +441,14 @@ export default function Home() {
 
             <div className="mt-6 grid grid-cols-2 gap-3">
               <Metric label="Today pass status" value={claimedToday ? "Complete" : "Open"} />
-              <Metric label="Total check-ins" value={points(checkInCount)} />
-              <Metric label="Reward points" value={points(rewardPointBalance)} />
-              <Metric label="Current streak" value={`${points(streak)} days`} />
+              <Metric label="Total check-ins" value={checkInCount} />
+              <Metric label="Reward points" value={rewardPointBalance} />
+              <Metric label="Current streak" value={`${streak} days`} />
             </div>
 
             <button
               type="button"
-              disabled={(isConnected && claimedToday) || isBusy || (isConnected && !isReadyForContract)}
+              disabled={(isConnected && claimedToday) || isBusy}
               onClick={() => (isConnected ? void claimPass() : setShowWallets(true))}
               className="mt-6 flex h-14 w-full items-center justify-center gap-2 rounded-[8px] bg-[#f4f7fb] px-5 text-sm font-semibold text-[#08090c] transition hover:bg-white disabled:cursor-not-allowed disabled:bg-white/18 disabled:text-white/45"
             >
@@ -357,9 +464,9 @@ export default function Home() {
               </div>
             ) : null}
 
-            {!isReadyForContract ? (
+            {!isOnchainMode ? (
               <p className="mt-3 text-xs leading-5 text-[#ffcf7a]">
-                Contract address is not configured. Add NEXT_PUBLIC_CONTRACT_ADDRESS before claiming.
+                Gas-free local mode is active. Add a contract address to enable onchain passes.
               </p>
             ) : null}
             {writeError ? <p className="mt-3 text-xs leading-5 text-[#ff8d8d]">{writeError.message}</p> : null}
@@ -387,14 +494,14 @@ export default function Home() {
 
             <Panel icon={<Ticket className="h-5 w-5" />} title="Raffle status">
               <div className="grid grid-cols-2 gap-3">
-                <Metric label="Current round" value={points(raffleRound.data)} compact />
-                <Metric label="Your entries" value={points(entries)} compact />
-                <Metric label="Entry cost" value={`${points(raffleEntryCost.data)} pts`} compact />
-                <Metric label="Last winner" value={shortAddress(lastWinner.data)} compact />
+                <Metric label="Current round" value={raffleRoundValue} compact />
+                <Metric label="Your entries" value={entries} compact />
+                <Metric label="Entry cost" value={raffleEntryCostValue} compact />
+                <Metric label="Last winner" value={lastWinnerValue} compact />
               </div>
               <button
                 type="button"
-                disabled={!isConnected || isBusy || !isReadyForContract}
+                disabled={!isConnected || isBusy}
                 onClick={() => void enterRaffle()}
                 className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-[8px] border border-white/10 bg-white/[0.05] text-sm font-semibold text-white transition hover:border-white/20 hover:bg-white/[0.09] disabled:cursor-not-allowed disabled:text-white/35"
               >
@@ -408,10 +515,10 @@ export default function Home() {
         <section id="rewards" className="mt-4">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-base font-semibold text-white">Available rewards</h2>
-            <span className="text-xs text-white/42">{rewards.length} shown</span>
+            <span className="text-xs text-white/42">{visibleRewards.length} shown</span>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {rewards.map((reward) => (
+            {visibleRewards.map((reward) => (
               <article key={reward.id} className="rounded-[8px] border border-white/10 bg-[#101216] p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -428,7 +535,7 @@ export default function Home() {
                 </div>
                 <button
                   type="button"
-                  disabled={!isConnected || isBusy || !reward.active || reward.stock === 0n || !isReadyForContract}
+                  disabled={!isConnected || isBusy || !reward.active || reward.stock === 0n}
                   onClick={() => void redeemReward(reward.id)}
                   className="mt-3 h-10 w-full rounded-[8px] bg-white/[0.05] text-sm font-semibold text-white transition hover:bg-white/[0.09] disabled:cursor-not-allowed disabled:text-white/35"
                 >

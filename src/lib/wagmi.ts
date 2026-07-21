@@ -19,8 +19,11 @@ declare global {
 
 export const chainId = Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? "8453");
 
-export const contractAddress = (process.env.NEXT_PUBLIC_CONTRACT_ADDRESS ??
-  "0x0000000000000000000000000000000000000000") as `0x${string}`;
+const envContractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS;
+
+export const contractAddress = (
+  envContractAddress && /^0x[0-9a-fA-F]{40}$/.test(envContractAddress) ? envContractAddress : undefined
+) as `0x${string}` | undefined;
 
 const envDataSuffix = process.env.NEXT_PUBLIC_DATA_SUFFIX;
 
