@@ -65,6 +65,15 @@ export const metaMaskConnector = injected({
   },
 });
 
+export const injectedFallbackConnector = injected({
+  shimDisconnect: true,
+  target: {
+    id: "injectedWallet",
+    name: "Injected Wallet",
+    provider: (windowObject) => (windowObject as InjectedWindow | undefined)?.ethereum,
+  },
+});
+
 export const coinbaseConnector = coinbaseWallet({
   appName: "BasePass Daily",
   preference: "all",
@@ -72,7 +81,7 @@ export const coinbaseConnector = coinbaseWallet({
 
 export const config = createConfig({
   chains: [base],
-  connectors: [okxConnector, metaMaskConnector, coinbaseConnector],
+  connectors: [okxConnector, metaMaskConnector, injectedFallbackConnector, coinbaseConnector],
   multiInjectedProviderDiscovery: false,
   ssr: true,
   transports: {

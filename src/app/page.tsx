@@ -78,6 +78,12 @@ function connectorMatches(connector: Connector, kind: WalletKind) {
   return id.includes("coinbase") || name.includes("coinbase");
 }
 
+function isInjectedFallback(connector: Connector) {
+  const id = connector.id.toLowerCase();
+  const name = connector.name.toLowerCase();
+  return id.includes("injectedwallet") || name.includes("injected wallet");
+}
+
 export default function Home() {
   const [message, setMessage] = useState("");
   const [origin, setOrigin] = useState("");
@@ -209,11 +215,13 @@ export default function Home() {
 
   async function connectWallet(kind: WalletKind) {
     const label = walletLabel(kind);
-    const connector = connectors.find((item) => connectorMatches(item, kind));
+    const connector =
+      connectors.find((item) => connectorMatches(item, kind)) ??
+      (kind === "coinbase" ? undefined : connectors.find((item) => isInjectedFallback(item)));
     setMessage(`Opening ${label}...`);
 
     if (!connector) {
-      setMessage(`${label} connector is not available in this browser.`);
+      setMessage(`${label} is not available here. Open this Mini App inside that wallet browser or Base App.`);
       return;
     }
 
@@ -374,7 +382,7 @@ export default function Home() {
                 <div>
                   <p className="text-sm font-semibold">{reward.name}</p>
                   <p className="text-xs text-white/45">
-                    {Number(reward.pointCost)} pts · {Number(reward.stock)} left
+                    {Number(reward.pointCost)} pts - {Number(reward.stock)} left
                   </p>
                 </div>
                 <button
@@ -393,7 +401,7 @@ export default function Home() {
         <section className="space-y-3 rounded-[8px] border border-white/10 bg-[#101216] p-4">
           <h2 className="font-semibold">Raffle</h2>
           <p className="text-sm text-white/55">
-            Entries: {stats.raffleEntries} · Cost: {isOnchain ? Number(raffleEntryCost.data ?? 20n) : 20} pts
+            Entries: {stats.raffleEntries} - Cost: {isOnchain ? Number(raffleEntryCost.data ?? 20n) : 20} pts
           </p>
           <button type="button" disabled={!isConnected || isBusy} onClick={() => void enterRaffle()} className="secondary-button">
             Enter Raffle
