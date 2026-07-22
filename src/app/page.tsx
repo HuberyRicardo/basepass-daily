@@ -24,14 +24,7 @@ import {
   useWriteContract,
 } from "wagmi";
 import { basePassDailyAbi } from "@/abi/basePassDaily";
-import {
-  coinbaseConnector,
-  config,
-  contractAddress,
-  dataSuffix,
-  metaMaskConnector,
-  okxConnector,
-} from "@/lib/wagmi";
+import { config, contractAddress, dataSuffix } from "@/lib/wagmi";
 
 type Reward = {
   id: number;
@@ -111,7 +104,6 @@ function numberPoints(value?: number) {
 }
 
 export default function Home() {
-  const [showWallets, setShowWallets] = useState(false);
   const [localStats, setLocalStats] = useState<LocalStats>(emptyLocalStats);
   const [referrer] = useState<`0x${string}`>(() => {
     if (typeof window === "undefined") return zeroAddress;
@@ -120,7 +112,7 @@ export default function Home() {
   });
   const [origin] = useState(() => (typeof window === "undefined" ? "" : window.location.origin));
   const { address, chainId, isConnected } = useAccount();
-  const { connect, isPending: isConnecting } = useConnect();
+  const { connect, connectors, error: connectError, isPending: isConnecting } = useConnect();
   const { disconnect } = useDisconnect();
   const { switchChainAsync } = useSwitchChain();
   const { writeContract, data: hash, isPending: isWriting, error: writeError, reset } = useWriteContract();
@@ -385,17 +377,30 @@ export default function Home() {
     });
   }
 
+  function findConnector(kind: "okx" | "metamask" | "coinbase") {
+    if (kind === "coinbase") {
+      return connectors.find((connector) => connector.id === "coinbaseWalletSDK" || connector.name === "Coinbase Wallet");
+    }
+
+    if (kind === "okx") {
+      return connectors.find((connector) => connector.id === "okxWallet" || connector.name === "OKX Wallet");
+    }
+
+    return connectors.find((connector) => connector.id === "metaMask" || connector.name === "MetaMask");
+  }
+
   function connectWallet(kind: "okx" | "metamask" | "coinbase") {
-    const connector = kind === "okx" ? okxConnector : kind === "metamask" ? metaMaskConnector : coinbaseConnector;
+    const connector = findConnector(kind);
+    if (!connector) return;
     connect(
       { connector, chainId: 8453 },
       {
-        onSuccess: () => setShowWallets(false),
+        onError: (error) => console.error(error),
       },
     );
   }
 
-  const mainButtonLabel = !isConnected ? "Choose Wallet" : claimedToday ? "Claimed Today" : "Claim Daily Pass";
+  const mainButtonLabel = !isConnected ? "Connect a Wallet Below" : claimedToday ? "Claimed Today" : "Claim Daily Pass";
   const isBusy = isConnecting || isWriting || isConfirming;
 
   return (
@@ -449,17 +454,16 @@ export default function Home() {
             <button
               type="button"
               data-testid="primary-wallet-action"
-              disabled={(isConnected && claimedToday) || isBusy}
-              onClick={() => (isConnected ? void claimPass() : setShowWallets(true))}
+              disabled={!isConnected || claimedToday || isBusy}
+              onClick={() => void claimPass()}
               className="mt-6 flex h-14 w-full items-center justify-center gap-2 rounded-[8px] bg-[#f4f7fb] px-5 text-sm font-semibold text-[#08090c] transition hover:bg-white disabled:cursor-not-allowed disabled:bg-white/18 disabled:text-white/45"
             >
               {isBusy ? "Waiting for wallet..." : mainButtonLabel}
               {!claimedToday ? <ArrowRight className="h-4 w-4" /> : <BadgeCheck className="h-4 w-4" />}
             </button>
 
-            {showWallets ? (
+            {!isConnected ? (
               <div className="mt-3 rounded-[8px] border border-white/10 bg-black/30 p-2">
-                <p className="px-3 pb-2 pt-1 text-xs font-medium text-white/45">Choose one wallet below.</p>
                 <WalletOption label="OKX Wallet" onClick={() => connectWallet("okx")} />
                 <WalletOption label="MetaMask" onClick={() => connectWallet("metamask")} />
                 <WalletOption label="Coinbase Wallet" onClick={() => connectWallet("coinbase")} />
@@ -472,6 +476,7 @@ export default function Home() {
               </p>
             ) : null}
             {writeError ? <p className="mt-3 text-xs leading-5 text-[#ff8d8d]">{writeError.message}</p> : null}
+            {connectError ? <p className="mt-3 text-xs leading-5 text-[#ff8d8d]">{connectError.message}</p> : null}
             {hash ? (
               <a
                 href={`https://basescan.org/tx/${hash}`}
