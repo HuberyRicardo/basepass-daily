@@ -113,6 +113,7 @@ function numberPoints(value?: number) {
 export default function Home() {
   const [localStats, setLocalStats] = useState<LocalStats>(emptyLocalStats);
   const [walletMessage, setWalletMessage] = useState("");
+  const [walletPanelHighlighted, setWalletPanelHighlighted] = useState(false);
   const [referrer] = useState<`0x${string}`>(() => {
     if (typeof window === "undefined") return zeroAddress;
     const value = new URLSearchParams(window.location.search).get("ref");
@@ -403,10 +404,11 @@ export default function Home() {
   }
 
   async function connectWallet(kind: "okx" | "metamask" | "coinbase") {
-    setWalletMessage("");
+    const walletName = kind === "okx" ? "OKX Wallet" : kind === "metamask" ? "MetaMask" : "Coinbase Wallet";
+    setWalletMessage(`Opening ${walletName}...`);
 
     if (kind !== "coinbase" && !hasInjectedWallet(kind)) {
-      setWalletMessage(`${kind === "okx" ? "OKX Wallet" : "MetaMask"} was not detected in this browser.`);
+      setWalletMessage(`${walletName} was not detected in this browser.`);
       return;
     }
 
@@ -420,7 +422,13 @@ export default function Home() {
     }
   }
 
-  const mainButtonLabel = !isConnected ? "Connect a Wallet Below" : claimedToday ? "Claimed Today" : "Claim Daily Pass";
+  function focusWalletOptions() {
+    setWalletPanelHighlighted(true);
+    setWalletMessage("Choose OKX Wallet, MetaMask, or Coinbase Wallet below.");
+    window.setTimeout(() => setWalletPanelHighlighted(false), 900);
+  }
+
+  const mainButtonLabel = !isConnected ? "Connect Wallet" : claimedToday ? "Claimed Today" : "Claim Daily Pass";
   const isBusy = isConnecting || isWriting || isConfirming;
 
   return (
@@ -474,8 +482,8 @@ export default function Home() {
             <button
               type="button"
               data-testid="primary-wallet-action"
-              disabled={!isConnected || claimedToday || isBusy}
-              onClick={() => void claimPass()}
+              disabled={(isConnected && claimedToday) || isBusy}
+              onClick={() => (isConnected ? void claimPass() : focusWalletOptions())}
               className="mt-6 flex h-14 w-full items-center justify-center gap-2 rounded-[8px] bg-[#f4f7fb] px-5 text-sm font-semibold text-[#08090c] transition hover:bg-white disabled:cursor-not-allowed disabled:bg-white/18 disabled:text-white/45"
             >
               {isBusy ? "Waiting for wallet..." : mainButtonLabel}
@@ -483,7 +491,14 @@ export default function Home() {
             </button>
 
             {!isConnected ? (
-              <div className="mt-3 rounded-[8px] border border-white/10 bg-black/30 p-2">
+              <div
+                className={`mt-3 rounded-[8px] border bg-black/30 p-2 transition ${
+                  walletPanelHighlighted ? "border-[#9ee7cf] shadow-[0_0_0_1px_rgba(158,231,207,0.35)]" : "border-white/10"
+                }`}
+              >
+                {walletMessage ? (
+                  <p className="px-3 pb-2 pt-1 text-xs font-medium text-[#ff8d8d]">{walletMessage}</p>
+                ) : null}
                 <WalletOption label="OKX Wallet" onClick={() => connectWallet("okx")} />
                 <WalletOption label="MetaMask" onClick={() => connectWallet("metamask")} />
                 <WalletOption label="Coinbase Wallet" onClick={() => connectWallet("coinbase")} />
@@ -497,7 +512,7 @@ export default function Home() {
             ) : null}
             {writeError ? <p className="mt-3 text-xs leading-5 text-[#ff8d8d]">{writeError.message}</p> : null}
             {connectError ? <p className="mt-3 text-xs leading-5 text-[#ff8d8d]">{connectError.message}</p> : null}
-            {walletMessage ? <p className="mt-3 text-xs leading-5 text-[#ff8d8d]">{walletMessage}</p> : null}
+            {walletMessage && isConnected ? <p className="mt-3 text-xs leading-5 text-[#ff8d8d]">{walletMessage}</p> : null}
             {hash ? (
               <a
                 href={`https://basescan.org/tx/${hash}`}
