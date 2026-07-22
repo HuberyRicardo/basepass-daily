@@ -94,6 +94,12 @@ function friendlyWalletError(error: unknown) {
   return error.message;
 }
 
+function prefersCalls(connector?: Connector) {
+  const id = connector?.id.toLowerCase() ?? "";
+  const name = connector?.name.toLowerCase() ?? "";
+  return id.includes("coinbase") || name.includes("coinbase") || id.includes("baseaccount") || name.includes("base account");
+}
+
 export default function Home() {
   const [message, setMessage] = useState("");
   const [origin, setOrigin] = useState("");
@@ -104,7 +110,7 @@ export default function Home() {
     return ref && isAddress(ref) ? ref : zeroAddress;
   });
 
-  const { address, chainId, isConnected } = useAccount();
+  const { address, chainId, connector, isConnected } = useAccount();
   const { connectAsync, connectors, error: connectError, isPending: isConnecting } = useConnect();
   const { disconnect } = useDisconnect();
   const { switchChainAsync } = useSwitchChain();
@@ -269,18 +275,20 @@ export default function Home() {
     await ensureBase();
     const attributedCallData = concatHex([callData, dataSuffix]);
 
-    try {
-      const result = await sendCallsAsync({
-        calls: [{ to: contractAddress, data: attributedCallData }],
-        capabilities: { dataSuffix: { value: dataSuffix, optional: true } },
-        chainId: 8453,
-        experimental_fallback: true,
-      });
-      setMessage(`Call submitted: ${result.id}`);
-      return;
-    } catch (error) {
-      setMessage("Smart wallet batch failed. Opening wallet transaction...");
-      console.info("wallet_sendCalls failed, falling back to sendTransaction", error);
+    if (prefersCalls(connector)) {
+      try {
+        const result = await sendCallsAsync({
+          calls: [{ to: contractAddress, data: attributedCallData }],
+          capabilities: { dataSuffix: { value: dataSuffix, optional: true } },
+          chainId: 8453,
+          experimental_fallback: true,
+        });
+        setMessage(`Call submitted: ${result.id}`);
+        return;
+      } catch (error) {
+        setMessage("Smart wallet batch failed. Opening wallet transaction...");
+        console.info("wallet_sendCalls failed, falling back to sendTransaction", error);
+      }
     }
 
     await sendTransactionAsync({
