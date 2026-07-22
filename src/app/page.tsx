@@ -217,7 +217,7 @@ export default function Home() {
     const label = walletLabel(kind);
     const connector =
       connectors.find((item) => connectorMatches(item, kind)) ??
-      (kind === "coinbase" ? undefined : connectors.find((item) => isInjectedFallback(item)));
+      (kind === "okx" ? connectors.find((item) => isInjectedFallback(item)) : undefined);
     setMessage(`Opening ${label}...`);
 
     if (!connector) {

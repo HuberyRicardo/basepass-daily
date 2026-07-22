@@ -45,6 +45,14 @@ function selectProvider(predicate: (provider: WalletProvider) => boolean) {
   };
 }
 
+function isOkxProvider(provider: WalletProvider) {
+  return provider.isOkxWallet === true || provider.isOKExWallet === true;
+}
+
+function isMetaMaskProvider(provider: WalletProvider) {
+  return provider.isMetaMask === true && !isOkxProvider(provider);
+}
+
 export const okxConnector = injected({
   shimDisconnect: true,
   target: {
@@ -52,7 +60,7 @@ export const okxConnector = injected({
     name: "OKX Wallet",
     provider: (windowObject) =>
       (windowObject as InjectedWindow | undefined)?.okxwallet ??
-      selectProvider((provider) => provider.isOkxWallet === true || provider.isOKExWallet === true)(windowObject),
+      selectProvider(isOkxProvider)(windowObject),
   },
 });
 
@@ -61,7 +69,7 @@ export const metaMaskConnector = injected({
   target: {
     id: "metaMask",
     name: "MetaMask",
-    provider: selectProvider((provider) => provider.isMetaMask === true),
+    provider: selectProvider(isMetaMaskProvider),
   },
 });
 
