@@ -28,7 +28,7 @@ export const contractAddress = (
 ) as `0x${string}` | undefined;
 
 const envDataSuffix = process.env.NEXT_PUBLIC_DATA_SUFFIX;
-const builderCode = process.env.NEXT_PUBLIC_BUILDER_CODE ?? "bc_q741sz3e";
+export const builderCode = process.env.NEXT_PUBLIC_BUILDER_CODE ?? "bc_q741sz3e";
 
 export const dataSuffix = (
   envDataSuffix && envDataSuffix !== "0x" && /^0x[0-9a-fA-F]+$/.test(envDataSuffix)

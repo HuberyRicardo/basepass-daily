@@ -16,7 +16,7 @@ import {
   useWaitForTransactionReceipt,
 } from "wagmi";
 import { basePassDailyAbi } from "@/abi/basePassDaily";
-import { config, contractAddress, dataSuffix } from "@/lib/wagmi";
+import { builderCode, config, contractAddress, dataSuffix } from "@/lib/wagmi";
 
 type WalletKind = "okx" | "metamask" | "coinbase";
 
@@ -126,12 +126,13 @@ export default function Home() {
     error: sendTransactionError,
     isPending: isSendingTransaction,
   } = useSendTransaction({ config });
-  const { isSuccess: isCallsSuccess } = useWaitForCallsStatus({
+  const { data: callsStatus, isSuccess: isCallsSuccess } = useWaitForCallsStatus({
     config,
     id: callsResult?.id,
     query: { enabled: Boolean(callsResult?.id) },
   });
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ config, hash });
+  const callReceiptHash = callsStatus?.receipts?.[0]?.transactionHash;
 
   const isOnchain = Boolean(contractAddress);
   const isBusy = isConnecting || isSendingCalls || isSendingTransaction || isConfirming;
@@ -474,18 +475,26 @@ export default function Home() {
           <p className="mt-2 text-xs text-white/45">Active referrer: {referrer === zeroAddress ? "None" : shortAddress(referrer)}</p>
         </section>
 
-        {hash ? (
+        {hash || callReceiptHash ? (
           <a
-            href={`https://basescan.org/tx/${hash}`}
+            href={`https://basescan.org/tx/${hash ?? callReceiptHash}`}
             target="_blank"
             rel="noreferrer"
             className="block truncate text-sm text-[#9ee7cf] underline-offset-4 hover:underline"
           >
-            Transaction: {hash}
+            Transaction: {hash ?? callReceiptHash}
           </a>
         ) : null}
 
         {callsResult?.id ? <p className="break-all text-xs text-white/45">Call batch: {callsResult.id}</p> : null}
+
+        <section className="rounded-[8px] border border-white/10 bg-[#101216] p-4">
+          <h2 className="font-semibold">Attribution</h2>
+          <p className="mt-2 break-all text-xs text-white/45">Mode: {isOnchain ? "Onchain" : "Local"}</p>
+          <p className="mt-1 break-all text-xs text-white/45">Contract: {contractAddress ?? "Not configured"}</p>
+          <p className="mt-1 break-all text-xs text-white/45">Builder Code: {builderCode}</p>
+          <p className="mt-1 break-all text-xs text-white/45">Data Suffix: {dataSuffix}</p>
+        </section>
       </div>
     </main>
   );
