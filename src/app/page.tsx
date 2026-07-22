@@ -12,6 +12,7 @@ import {
   useSendCalls,
   useSendTransaction,
   useSwitchChain,
+  useWaitForCallsStatus,
   useWaitForTransactionReceipt,
 } from "wagmi";
 import { basePassDailyAbi } from "@/abi/basePassDaily";
@@ -119,6 +120,11 @@ export default function Home() {
     error: sendTransactionError,
     isPending: isSendingTransaction,
   } = useSendTransaction({ config });
+  const { isSuccess: isCallsSuccess } = useWaitForCallsStatus({
+    config,
+    id: callsResult?.id,
+    query: { enabled: Boolean(callsResult?.id) },
+  });
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ config, hash });
 
   const isOnchain = Boolean(contractAddress);
@@ -192,13 +198,13 @@ export default function Home() {
   }, [address, isOnchain, localStats]);
 
   useEffect(() => {
-    if (!isSuccess) return;
-    queueMicrotask(() => setMessage("Transaction confirmed."));
+    if (!isSuccess && !isCallsSuccess) return;
+    queueMicrotask(() => setMessage("Transaction confirmed. Stats refreshed."));
     void userReads.refetch();
     void rewardReads.refetch();
     void rewardCount.refetch();
     void raffleEntryCost.refetch();
-  }, [isSuccess, raffleEntryCost, rewardCount, rewardReads, userReads]);
+  }, [isCallsSuccess, isSuccess, raffleEntryCost, rewardCount, rewardReads, userReads]);
 
   const [checkIns = 0n, points = 0n, lastDay = 0n, streak = 0n, raffleEntries = 0n] = userReads.data ?? [];
 
@@ -261,11 +267,12 @@ export default function Home() {
   async function sendAttributedContractCall(callData: Hex) {
     if (!contractAddress) return;
     await ensureBase();
+    const attributedCallData = concatHex([callData, dataSuffix]);
 
     try {
       const result = await sendCallsAsync({
-        calls: [{ to: contractAddress, data: callData }],
-        capabilities: { dataSuffix: { value: dataSuffix } },
+        calls: [{ to: contractAddress, data: attributedCallData }],
+        capabilities: { dataSuffix: { value: dataSuffix, optional: true } },
         chainId: 8453,
         experimental_fallback: true,
       });
@@ -278,7 +285,7 @@ export default function Home() {
 
     await sendTransactionAsync({
       to: contractAddress,
-      data: concatHex([callData, dataSuffix]),
+      data: callData,
       chainId: 8453,
     });
   }

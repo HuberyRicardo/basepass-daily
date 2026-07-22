@@ -30,7 +30,7 @@ const envDataSuffix = process.env.NEXT_PUBLIC_DATA_SUFFIX;
 const builderCode = process.env.NEXT_PUBLIC_BUILDER_CODE ?? "bc_q741sz3e";
 
 export const dataSuffix = (
-  envDataSuffix && /^0x[0-9a-fA-F]*$/.test(envDataSuffix)
+  envDataSuffix && envDataSuffix !== "0x" && /^0x[0-9a-fA-F]+$/.test(envDataSuffix)
     ? envDataSuffix
     : Attribution.toDataSuffix({ codes: [builderCode] })
 ) as `0x${string}`;
