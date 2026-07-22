@@ -21,7 +21,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} h-full bg-[#08090c] antialiased`}>
       <head>
-        <meta name="base:app_id" content={process.env.NEXT_PUBLIC_BASE_APP_ID ?? "[base.dev Verify token]"} />
+        <meta name="base:app_id" content="6a605ba7078f6baf9ef30122" />
       </head>
       <body className="min-h-full bg-[#08090c] text-white">
         <Providers>{children}</Providers>
