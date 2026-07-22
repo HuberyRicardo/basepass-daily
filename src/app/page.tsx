@@ -1,23 +1,11 @@
 "use client";
 
-import {
-  ArrowRight,
-  BadgeCheck,
-  Gift,
-  LinkIcon,
-  LogOut,
-  Sparkles,
-  Ticket,
-  Trophy,
-  Wallet,
-} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { formatUnits, isAddress, zeroAddress } from "viem";
+import { isAddress, zeroAddress } from "viem";
 import {
   useAccount,
   useConnect,
   useDisconnect,
-  useReadContract,
   useReadContracts,
   useSwitchChain,
   useWaitForTransactionReceipt,
@@ -26,23 +14,22 @@ import {
 import { basePassDailyAbi } from "@/abi/basePassDaily";
 import { coinbaseConnector, config, contractAddress, dataSuffix, metaMaskConnector, okxConnector } from "@/lib/wagmi";
 
-type Reward = {
-  id: number;
-  name: string;
-  metadataUri: string;
-  pointCost: bigint;
-  stock: bigint;
-  active: boolean;
-};
+type WalletKind = "okx" | "metamask" | "coinbase";
 
 type LocalStats = {
-  checkInCount: number;
-  rewardPoints: number;
-  lastCheckInDay: number;
+  checkIns: number;
+  points: number;
   streak: number;
+  lastDay: number;
   raffleEntries: number;
-  claimedReferral: boolean;
-  rewardStock: Record<string, number>;
+};
+
+const emptyStats: LocalStats = {
+  checkIns: 0,
+  points: 0,
+  streak: 0,
+  lastDay: 0,
+  raffleEntries: 0,
 };
 
 type InjectedWalletProvider = {
@@ -52,277 +39,179 @@ type InjectedWalletProvider = {
   providers?: InjectedWalletProvider[];
 };
 
-const emptyLocalStats: LocalStats = {
-  checkInCount: 0,
-  rewardPoints: 0,
-  lastCheckInDay: 0,
-  streak: 0,
-  raffleEntries: 0,
-  claimedReferral: false,
-  rewardStock: {},
-};
+function today() {
+  return Math.floor(Date.now() / 1000 / 86_400);
+}
 
-const rewardPreview: Reward[] = [
-  {
-    id: 0,
-    name: "Local Coffee Upgrade",
-    metadataUri: "Sample perk",
-    pointCost: 80n,
-    stock: 24n,
-    active: true,
-  },
-  {
-    id: 1,
-    name: "Weekend Fitness Drop-in",
-    metadataUri: "Sample perk",
-    pointCost: 140n,
-    stock: 12n,
-    active: true,
-  },
-  {
-    id: 2,
-    name: "Streaming Trial Pass",
-    metadataUri: "Sample perk",
-    pointCost: 220n,
-    stock: 8n,
-    active: true,
-  },
-];
+function todayBigInt() {
+  return BigInt(today());
+}
 
 function shortAddress(address?: string) {
   if (!address) return "Not connected";
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
-function currentDay() {
-  return BigInt(Math.floor(Date.now() / 1000 / 86_400));
+function walletName(kind: WalletKind) {
+  if (kind === "okx") return "OKX Wallet";
+  if (kind === "metamask") return "MetaMask";
+  return "Coinbase Wallet";
 }
 
-function currentDayNumber() {
-  return Math.floor(Date.now() / 1000 / 86_400);
-}
-
-function points(value?: bigint) {
-  return value ? Number(formatUnits(value, 0)).toLocaleString("en-US") : "0";
-}
-
-function numberPoints(value?: number) {
-  return (value ?? 0).toLocaleString("en-US");
+function hasInjectedWallet(kind: Exclude<WalletKind, "coinbase">) {
+  if (typeof window === "undefined") return false;
+  const injectedWindow = window as typeof window & {
+    ethereum?: InjectedWalletProvider;
+    okxwallet?: InjectedWalletProvider;
+  };
+  if (kind === "okx" && injectedWindow.okxwallet) return true;
+  const ethereum = injectedWindow.ethereum;
+  const providers = ethereum?.providers ?? [];
+  const allProviders = ethereum ? [ethereum, ...providers] : providers;
+  return allProviders.some((provider) =>
+    kind === "okx"
+      ? provider.isOkxWallet === true || provider.isOKExWallet === true
+      : provider.isMetaMask === true,
+  );
 }
 
 export default function Home() {
-  const [localStats, setLocalStats] = useState<LocalStats>(emptyLocalStats);
-  const [walletMessage, setWalletMessage] = useState("");
-  const [walletPanelHighlighted, setWalletPanelHighlighted] = useState(false);
+  const [message, setMessage] = useState("");
+  const [localStats, setLocalStats] = useState<LocalStats>(emptyStats);
   const [referrer] = useState<`0x${string}`>(() => {
     if (typeof window === "undefined") return zeroAddress;
     const value = new URLSearchParams(window.location.search).get("ref");
     return value && isAddress(value) ? value : zeroAddress;
   });
-  const [origin] = useState(() => (typeof window === "undefined" ? "" : window.location.origin));
+
   const { address, chainId, isConnected } = useAccount();
-  const { connectAsync, error: connectError, isPending: isConnecting } = useConnect();
+  const { connectAsync, isPending: isConnecting } = useConnect();
   const { disconnect } = useDisconnect();
   const { switchChainAsync } = useSwitchChain();
-  const { writeContract, data: hash, isPending: isWriting, error: writeError, reset } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash, config });
+  const { writeContract, data: hash, error: writeError, isPending: isWriting } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ config, hash });
 
-  const isOnchainMode = Boolean(contractAddress);
+  const isOnchain = Boolean(contractAddress);
+  const isBusy = isConnecting || isWriting || isConfirming;
 
-  const userReads = useReadContracts({
+  const reads = useReadContracts({
     config,
     allowFailure: false,
-    query: {
-      enabled: Boolean(address) && isOnchainMode,
-    },
-    contracts: address
-      ? [
-          {
-            address: contractAddress,
-            abi: basePassDailyAbi,
-            functionName: "walletCheckInCount",
-            args: [address],
-          },
-          {
-            address: contractAddress,
-            abi: basePassDailyAbi,
-            functionName: "rewardPoints",
-            args: [address],
-          },
-          {
-            address: contractAddress,
-            abi: basePassDailyAbi,
-            functionName: "lastCheckInDay",
-            args: [address],
-          },
-          {
-            address: contractAddress,
-            abi: basePassDailyAbi,
-            functionName: "checkInStreak",
-            args: [address],
-          },
-          {
-            address: contractAddress,
-            abi: basePassDailyAbi,
-            functionName: "raffleEntries",
-            args: [address],
-          },
-        ]
-      : [],
+    query: { enabled: Boolean(address) && isOnchain },
+    contracts:
+      address && contractAddress
+        ? [
+            {
+              address: contractAddress,
+              abi: basePassDailyAbi,
+              functionName: "walletCheckInCount",
+              args: [address],
+            },
+            {
+              address: contractAddress,
+              abi: basePassDailyAbi,
+              functionName: "rewardPoints",
+              args: [address],
+            },
+            {
+              address: contractAddress,
+              abi: basePassDailyAbi,
+              functionName: "lastCheckInDay",
+              args: [address],
+            },
+            {
+              address: contractAddress,
+              abi: basePassDailyAbi,
+              functionName: "checkInStreak",
+              args: [address],
+            },
+            {
+              address: contractAddress,
+              abi: basePassDailyAbi,
+              functionName: "raffleEntries",
+              args: [address],
+            },
+          ]
+        : [],
   });
 
-  const rewardCount = useReadContract({
-    config,
-    address: contractAddress ?? zeroAddress,
-    abi: basePassDailyAbi,
-    functionName: "rewardCount",
-    query: {
-      enabled: isOnchainMode,
-    },
-  });
+  useEffect(() => {
+    if (!address || isOnchain) {
+      queueMicrotask(() => setLocalStats(emptyStats));
+      return;
+    }
+    const stored = window.localStorage.getItem(`basepass-daily:${address.toLowerCase()}`);
+    queueMicrotask(() => setLocalStats(stored ? { ...emptyStats, ...JSON.parse(stored) } : emptyStats));
+  }, [address, isOnchain]);
 
-  const raffleRound = useReadContract({
-    config,
-    address: contractAddress ?? zeroAddress,
-    abi: basePassDailyAbi,
-    functionName: "raffleRound",
-    query: {
-      enabled: isOnchainMode,
-    },
-  });
-
-  const lastWinner = useReadContract({
-    config,
-    address: contractAddress ?? zeroAddress,
-    abi: basePassDailyAbi,
-    functionName: "lastRaffleWinner",
-    query: {
-      enabled: isOnchainMode,
-    },
-  });
-
-  const raffleEntryCost = useReadContract({
-    config,
-    address: contractAddress ?? zeroAddress,
-    abi: basePassDailyAbi,
-    functionName: "raffleEntryCost",
-    query: {
-      enabled: isOnchainMode,
-    },
-  });
-
-  const rewardIds = useMemo(() => {
-    const count = rewardCount.data ? Number(rewardCount.data) : 0;
-    return Array.from({ length: Math.min(count, 6) }, (_, id) => id);
-  }, [rewardCount.data]);
-
-  const rewardReads = useReadContracts({
-    config,
-    allowFailure: true,
-    query: {
-      enabled: isOnchainMode && rewardIds.length > 0,
-    },
-    contracts: rewardIds.map((id) => ({
-      address: contractAddress ?? zeroAddress,
-      abi: basePassDailyAbi,
-      functionName: "getReward",
-      args: [BigInt(id)],
-    })),
-  });
+  useEffect(() => {
+    if (!address || isOnchain) return;
+    window.localStorage.setItem(`basepass-daily:${address.toLowerCase()}`, JSON.stringify(localStats));
+  }, [address, isOnchain, localStats]);
 
   useEffect(() => {
     if (!isSuccess) return;
-    void userReads.refetch();
-    void rewardCount.refetch();
-    void rewardReads.refetch();
-    void raffleRound.refetch();
-    void lastWinner.refetch();
-    void raffleEntryCost.refetch();
-  }, [isSuccess, lastWinner, raffleEntryCost, raffleRound, rewardCount, rewardReads, userReads]);
+    queueMicrotask(() => setMessage("Transaction confirmed."));
+    void reads.refetch();
+  }, [isSuccess, reads]);
 
-  useEffect(() => {
-    if (!address || isOnchainMode) {
-      queueMicrotask(() => setLocalStats(emptyLocalStats));
+  const [checkIns = 0n, rewardPoints = 0n, lastCheckInDay = 0n, streak = 0n, raffleEntries = 0n] = reads.data ?? [];
+
+  const stats = useMemo(
+    () => ({
+      checkIns: isOnchain ? Number(checkIns) : localStats.checkIns,
+      points: isOnchain ? Number(rewardPoints) : localStats.points,
+      streak: isOnchain ? Number(streak) : localStats.streak,
+      raffleEntries: isOnchain ? Number(raffleEntries) : localStats.raffleEntries,
+      claimedToday: isConnected && (isOnchain ? lastCheckInDay === todayBigInt() : localStats.lastDay === today()),
+    }),
+    [checkIns, isConnected, isOnchain, lastCheckInDay, localStats, raffleEntries, rewardPoints, streak],
+  );
+
+  async function connectWallet(kind: WalletKind) {
+    const name = walletName(kind);
+    setMessage(`Opening ${name}...`);
+
+    if (kind !== "coinbase" && !hasInjectedWallet(kind)) {
+      setMessage(`${name} was not detected in this browser.`);
       return;
     }
 
-    const stored = window.localStorage.getItem(`basepass-daily:${address.toLowerCase()}`);
-    queueMicrotask(() =>
-      setLocalStats(stored ? ({ ...emptyLocalStats, ...JSON.parse(stored) } as LocalStats) : emptyLocalStats),
-    );
-  }, [address, isOnchainMode]);
+    const connector = kind === "okx" ? okxConnector : kind === "metamask" ? metaMaskConnector : coinbaseConnector;
 
-  useEffect(() => {
-    if (!address || isOnchainMode) return;
-    window.localStorage.setItem(`basepass-daily:${address.toLowerCase()}`, JSON.stringify(localStats));
-  }, [address, isOnchainMode, localStats]);
+    try {
+      await connectAsync({ connector, chainId: 8453 });
+      setMessage(`${name} connected.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Wallet connection failed.");
+    }
+  }
 
-  const [onchainCheckInCount = 0n, onchainRewardPointBalance = 0n, onchainLastCheckInDay = 0n, onchainStreak = 0n, onchainEntries = 0n] =
-    userReads.data ?? [];
-
-  const claimedToday = isConnected && (isOnchainMode ? onchainLastCheckInDay === currentDay() : localStats.lastCheckInDay === currentDayNumber());
-  const inviteLink = address && origin ? `${origin}/?ref=${address}` : "Connect wallet to create your link";
-  const checkInCount = isOnchainMode ? points(onchainCheckInCount) : numberPoints(localStats.checkInCount);
-  const rewardPointBalance = isOnchainMode ? points(onchainRewardPointBalance) : numberPoints(localStats.rewardPoints);
-  const streak = isOnchainMode ? points(onchainStreak) : numberPoints(localStats.streak);
-  const entries = isOnchainMode ? points(onchainEntries) : numberPoints(localStats.raffleEntries);
-  const raffleRoundValue = isOnchainMode ? points(raffleRound.data) : "Local";
-  const raffleEntryCostValue = isOnchainMode ? `${points(raffleEntryCost.data)} pts` : "20 pts";
-  const lastWinnerValue = isOnchainMode ? shortAddress(lastWinner.data) : "Local draw";
-
-  const rewards = useMemo<Reward[]>(() => {
-    if (!rewardReads.data?.length) return rewardPreview;
-    return rewardReads.data
-      .map((result, index) => {
-        if (result.status !== "success") return null;
-        const reward = result.result as unknown as readonly [string, string, bigint, bigint, boolean];
-        return {
-          id: rewardIds[index],
-          name: reward[0],
-          metadataUri: reward[1],
-          pointCost: reward[2],
-          stock: reward[3],
-          active: reward[4],
-        };
-      })
-      .filter((reward): reward is Reward => Boolean(reward));
-  }, [rewardIds, rewardReads.data]);
-
-  const visibleRewards = useMemo(
-    () =>
-      rewards.map((reward) => ({
-        ...reward,
-        stock: isOnchainMode ? reward.stock : BigInt(localStats.rewardStock[String(reward.id)] ?? Number(reward.stock)),
-      })),
-    [isOnchainMode, localStats.rewardStock, rewards],
-  );
-
-  async function ensureBaseChain() {
+  async function ensureBase() {
     if (chainId === 8453) return;
     await switchChainAsync({ chainId: 8453 });
   }
 
-  async function claimPass() {
-    if (!isConnected || !address || claimedToday) return;
-    if (!isOnchainMode) {
-      setLocalStats((stats) => {
-        const today = currentDayNumber();
-        const nextStreak = stats.lastCheckInDay + 1 === today ? stats.streak + 1 : 1;
-        const referralBonus = !stats.claimedReferral && referrer !== zeroAddress && referrer.toLowerCase() !== address.toLowerCase();
+  async function claimDailyPass() {
+    if (!address || stats.claimedToday) return;
+    setMessage("Claiming Daily Pass...");
+
+    if (!isOnchain || !contractAddress) {
+      setLocalStats((current) => {
+        const nextStreak = current.lastDay + 1 === today() ? current.streak + 1 : 1;
         return {
-          ...stats,
-          checkInCount: stats.checkInCount + 1,
-          rewardPoints: stats.rewardPoints + 10 + (nextStreak > 1 ? 2 : 0) + (referralBonus ? 15 : 0),
-          lastCheckInDay: today,
+          ...current,
+          checkIns: current.checkIns + 1,
+          points: current.points + 10 + (nextStreak > 1 ? 2 : 0),
           streak: nextStreak,
-          claimedReferral: stats.claimedReferral || referralBonus,
+          lastDay: today(),
         };
       });
+      setMessage("Daily Pass claimed locally.");
       return;
     }
-    if (!contractAddress) return;
-    reset();
-    await ensureBaseChain();
+
+    await ensureBase();
     writeContract({
       address: contractAddress,
       abi: basePassDailyAbi,
@@ -332,51 +221,41 @@ export default function Home() {
     });
   }
 
-  async function redeemReward(rewardId: number) {
-    if (!isConnected) return;
-    if (!isOnchainMode) {
-      const reward = visibleRewards.find((item) => item.id === rewardId);
-      if (!reward) return;
-      setLocalStats((stats) => {
-        const stock = stats.rewardStock[String(rewardId)] ?? Number(reward.stock);
-        const cost = Number(reward.pointCost);
-        if (stats.rewardPoints < cost || stock < 1) return stats;
-        return {
-          ...stats,
-          rewardPoints: stats.rewardPoints - cost,
-          rewardStock: { ...stats.rewardStock, [rewardId]: stock - 1 },
-        };
-      });
+  async function redeemReward() {
+    if (!address) return;
+    setMessage("Redeeming reward...");
+
+    if (!isOnchain || !contractAddress) {
+      setLocalStats((current) => (current.points >= 80 ? { ...current, points: current.points - 80 } : current));
+      setMessage("Reward redeemed locally.");
       return;
     }
-    if (!contractAddress) return;
-    reset();
-    await ensureBaseChain();
+
+    await ensureBase();
     writeContract({
       address: contractAddress,
       abi: basePassDailyAbi,
       functionName: "redeemReward",
-      args: [BigInt(rewardId)],
+      args: [0n],
       dataSuffix,
     });
   }
 
   async function enterRaffle() {
-    if (!isConnected) return;
-    if (!isOnchainMode) {
-      setLocalStats((stats) => {
-        if (stats.rewardPoints < 20) return stats;
-        return {
-          ...stats,
-          rewardPoints: stats.rewardPoints - 20,
-          raffleEntries: stats.raffleEntries + 1,
-        };
-      });
+    if (!address) return;
+    setMessage("Entering raffle...");
+
+    if (!isOnchain || !contractAddress) {
+      setLocalStats((current) =>
+        current.points >= 20
+          ? { ...current, points: current.points - 20, raffleEntries: current.raffleEntries + 1 }
+          : current,
+      );
+      setMessage("Raffle entered locally.");
       return;
     }
-    if (!contractAddress) return;
-    reset();
-    await ensureBaseChain();
+
+    await ensureBase();
     writeContract({
       address: contractAddress,
       abi: basePassDailyAbi,
@@ -386,263 +265,116 @@ export default function Home() {
     });
   }
 
-  function hasInjectedWallet(kind: "okx" | "metamask") {
-    if (typeof window === "undefined") return false;
-    const injectedWindow = window as typeof window & {
-      ethereum?: InjectedWalletProvider;
-      okxwallet?: InjectedWalletProvider;
-    };
-    if (kind === "okx" && injectedWindow.okxwallet) return true;
-    const ethereum = injectedWindow.ethereum;
-    const providers = ethereum?.providers ?? [];
-    const allProviders = ethereum ? [ethereum, ...providers] : providers;
-    return allProviders.some((provider) =>
-      kind === "okx"
-        ? provider.isOkxWallet === true || provider.isOKExWallet === true
-        : provider.isMetaMask === true,
-    );
-  }
-
-  async function connectWallet(kind: "okx" | "metamask" | "coinbase") {
-    const walletName = kind === "okx" ? "OKX Wallet" : kind === "metamask" ? "MetaMask" : "Coinbase Wallet";
-    setWalletMessage(`Opening ${walletName}...`);
-
-    if (kind !== "coinbase" && !hasInjectedWallet(kind)) {
-      setWalletMessage(`${walletName} was not detected in this browser.`);
-      return;
-    }
-
-    const connector = kind === "okx" ? okxConnector : kind === "metamask" ? metaMaskConnector : coinbaseConnector;
-
-    try {
-      await connectAsync({ connector, chainId: 8453 });
-      setWalletMessage("");
-    } catch (error) {
-      setWalletMessage(error instanceof Error ? error.message : "Wallet connection failed.");
-    }
-  }
-
-  function focusWalletOptions() {
-    setWalletPanelHighlighted(true);
-    setWalletMessage("Choose OKX Wallet, MetaMask, or Coinbase Wallet below.");
-    window.setTimeout(() => setWalletPanelHighlighted(false), 900);
-  }
-
-  const mainButtonLabel = !isConnected ? "Connect Wallet" : claimedToday ? "Claimed Today" : "Claim Daily Pass";
-  const isBusy = isConnecting || isWriting || isConfirming;
-
   return (
-    <main className="min-h-screen bg-[#08090c] text-white">
-      <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 pb-24 pt-5 sm:px-6 lg:px-8">
-        <header className="flex items-start justify-between gap-4">
-          <div>
-            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-[#9ee7cf]">
-              <Sparkles className="h-3.5 w-3.5" />
-              Daily local perks on Base
-            </div>
-            <h1 className="text-3xl font-semibold leading-tight tracking-normal text-white sm:text-5xl">
-              BasePass Daily
-            </h1>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-white/62 sm:text-base">
-              Discover perks. Earn points. Unlock rewards.
-            </p>
-          </div>
-          {isConnected ? (
-            <button
-              type="button"
-              onClick={() => disconnect()}
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white/70 transition hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
-              aria-label="Disconnect wallet"
-              title="Disconnect"
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
-          ) : null}
-        </header>
-
-        <section id="pass" className="mt-7 grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
-          <div className="rounded-[8px] border border-white/10 bg-[#101216] p-5 shadow-2xl shadow-black/30">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-medium uppercase tracking-[0.16em] text-white/42">Connected wallet</p>
-                <p className="mt-1 font-mono text-sm text-white">{shortAddress(address)}</p>
-              </div>
-              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#2f6bff]/15 text-[#74a3ff]">
-                <Wallet className="h-5 w-5" />
-              </div>
-            </div>
-
-            <div className="mt-6 grid grid-cols-2 gap-3">
-              <Metric label="Today pass status" value={claimedToday ? "Complete" : "Open"} />
-              <Metric label="Total check-ins" value={checkInCount} />
-              <Metric label="Reward points" value={rewardPointBalance} />
-              <Metric label="Current streak" value={`${streak} days`} />
-            </div>
-
-            <button
-              type="button"
-              data-testid="primary-wallet-action"
-              disabled={(isConnected && claimedToday) || isBusy}
-              onClick={() => (isConnected ? void claimPass() : focusWalletOptions())}
-              className="mt-6 flex h-14 w-full items-center justify-center gap-2 rounded-[8px] bg-[#f4f7fb] px-5 text-sm font-semibold text-[#08090c] transition hover:bg-white disabled:cursor-not-allowed disabled:bg-white/18 disabled:text-white/45"
-            >
-              {isBusy ? "Waiting for wallet..." : mainButtonLabel}
-              {!claimedToday ? <ArrowRight className="h-4 w-4" /> : <BadgeCheck className="h-4 w-4" />}
-            </button>
-
-            {!isConnected ? (
-              <div
-                className={`mt-3 rounded-[8px] border bg-black/30 p-2 transition ${
-                  walletPanelHighlighted ? "border-[#9ee7cf] shadow-[0_0_0_1px_rgba(158,231,207,0.35)]" : "border-white/10"
-                }`}
-              >
-                {walletMessage ? (
-                  <p className="px-3 pb-2 pt-1 text-xs font-medium text-[#ff8d8d]">{walletMessage}</p>
-                ) : null}
-                <WalletOption label="OKX Wallet" onClick={() => connectWallet("okx")} />
-                <WalletOption label="MetaMask" onClick={() => connectWallet("metamask")} />
-                <WalletOption label="Coinbase Wallet" onClick={() => connectWallet("coinbase")} />
-              </div>
-            ) : null}
-
-            {!isOnchainMode ? (
-              <p className="mt-3 text-xs leading-5 text-[#ffcf7a]">
-                Gas-free local mode is active. Add a contract address to enable onchain passes.
-              </p>
-            ) : null}
-            {writeError ? <p className="mt-3 text-xs leading-5 text-[#ff8d8d]">{writeError.message}</p> : null}
-            {connectError ? <p className="mt-3 text-xs leading-5 text-[#ff8d8d]">{connectError.message}</p> : null}
-            {walletMessage && isConnected ? <p className="mt-3 text-xs leading-5 text-[#ff8d8d]">{walletMessage}</p> : null}
-            {hash ? (
-              <a
-                href={`https://basescan.org/tx/${hash}`}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-3 block truncate text-xs text-[#9ee7cf] underline-offset-4 hover:underline"
-              >
-                Transaction: {hash}
-              </a>
-            ) : null}
-          </div>
-
-          <div className="grid gap-4">
-            <Panel id="invite" icon={<LinkIcon className="h-5 w-5" />} title="Referral link">
-              <p className="break-all rounded-[8px] border border-white/10 bg-white/[0.035] p-3 font-mono text-xs leading-5 text-white/72">
-                {inviteLink}
-              </p>
-              <p className="mt-3 text-xs leading-5 text-white/48">
-                Active referrer: {referrer === zeroAddress ? "None" : shortAddress(referrer)}
-              </p>
-            </Panel>
-
-            <Panel icon={<Ticket className="h-5 w-5" />} title="Raffle status">
-              <div className="grid grid-cols-2 gap-3">
-                <Metric label="Current round" value={raffleRoundValue} compact />
-                <Metric label="Your entries" value={entries} compact />
-                <Metric label="Entry cost" value={raffleEntryCostValue} compact />
-                <Metric label="Last winner" value={lastWinnerValue} compact />
-              </div>
-              <button
-                type="button"
-                disabled={!isConnected || isBusy}
-                onClick={() => void enterRaffle()}
-                className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-[8px] border border-white/10 bg-white/[0.05] text-sm font-semibold text-white transition hover:border-white/20 hover:bg-white/[0.09] disabled:cursor-not-allowed disabled:text-white/35"
-              >
-                <Trophy className="h-4 w-4" />
-                Enter Raffle
-              </button>
-            </Panel>
-          </div>
-        </section>
-
-        <section id="rewards" className="mt-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-base font-semibold text-white">Available rewards</h2>
-            <span className="text-xs text-white/42">{visibleRewards.length} shown</span>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {visibleRewards.map((reward) => (
-              <article key={reward.id} className="rounded-[8px] border border-white/10 bg-[#101216] p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-semibold leading-5 text-white">{reward.name}</h3>
-                    <p className="mt-1 text-xs leading-5 text-white/48">{reward.metadataUri || "Local partner perk"}</p>
-                  </div>
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#9ee7cf]/12 text-[#9ee7cf]">
-                    <Gift className="h-4 w-4" />
-                  </div>
-                </div>
-                <div className="mt-4 flex items-center justify-between text-xs text-white/55">
-                  <span>{points(reward.pointCost)} pts</span>
-                  <span>{reward.active ? `${points(reward.stock)} left` : "Paused"}</span>
-                </div>
-                <button
-                  type="button"
-                  disabled={!isConnected || isBusy || !reward.active || reward.stock === 0n}
-                  onClick={() => void redeemReward(reward.id)}
-                  className="mt-3 h-10 w-full rounded-[8px] bg-white/[0.05] text-sm font-semibold text-white transition hover:bg-white/[0.09] disabled:cursor-not-allowed disabled:text-white/35"
-                >
-                  Redeem
-                </button>
-              </article>
-            ))}
-          </div>
-        </section>
-      </div>
-
-      <nav className="fixed inset-x-0 bottom-0 border-t border-white/10 bg-[#08090c]/90 px-6 py-3 backdrop-blur">
-        <div className="mx-auto flex max-w-md items-center justify-around text-xs font-medium text-white/55">
-          <a href="#pass" className="text-white">
-            Pass
-          </a>
-          <a href="#rewards">Rewards</a>
-          <a href="#invite">Invite</a>
+    <main className="min-h-screen bg-[#08090c] px-4 py-6 text-white">
+      <div className="mx-auto max-w-md space-y-4 rounded-[8px] border border-white/10 bg-[#101216] p-5">
+        <div>
+          <h1 className="text-2xl font-semibold">BasePass Daily</h1>
+          <p className="mt-1 text-sm text-white/55">Discover perks. Earn points. Unlock rewards.</p>
         </div>
-      </nav>
+
+        <div className="rounded-[8px] border border-white/10 bg-black/25 p-3">
+          <p className="text-xs uppercase tracking-[0.14em] text-white/40">Wallet</p>
+          <p className="mt-1 font-mono text-sm">{shortAddress(address)}</p>
+        </div>
+
+        {!isConnected ? (
+          <div className="grid gap-2">
+            <WalletButton label="OKX Wallet" disabled={isBusy} onClick={() => connectWallet("okx")} />
+            <WalletButton label="MetaMask" disabled={isBusy} onClick={() => connectWallet("metamask")} />
+            <WalletButton label="Coinbase Wallet" disabled={isBusy} onClick={() => connectWallet("coinbase")} />
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => disconnect()}
+            className="h-11 w-full rounded-[8px] border border-white/10 bg-white/[0.05] text-sm font-semibold hover:bg-white/[0.09]"
+          >
+            Disconnect
+          </button>
+        )}
+
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <Stat label="Today" value={stats.claimedToday ? "Claimed" : "Open"} />
+          <Stat label="Check-ins" value={String(stats.checkIns)} />
+          <Stat label="Points" value={String(stats.points)} />
+          <Stat label="Streak" value={`${stats.streak} days`} />
+        </div>
+
+        <div className="grid gap-2">
+          <ActionButton disabled={!isConnected || stats.claimedToday || isBusy} onClick={claimDailyPass}>
+            {stats.claimedToday ? "Claimed Today" : "Claim Daily Pass"}
+          </ActionButton>
+          <ActionButton disabled={!isConnected || isBusy} onClick={redeemReward}>
+            Redeem Reward
+          </ActionButton>
+          <ActionButton disabled={!isConnected || isBusy} onClick={enterRaffle}>
+            Enter Raffle
+          </ActionButton>
+        </div>
+
+        <div className="rounded-[8px] border border-white/10 bg-black/25 p-3 text-xs leading-5 text-white/65">
+          <p>{isOnchain ? "Onchain mode: transactions use Base gas." : "Local mode: no gas required."}</p>
+          <p>Raffle entries: {stats.raffleEntries}</p>
+          <p className="break-all">Referral: {address ? `${origin}/?ref=${address}` : "Connect wallet first"}</p>
+        </div>
+
+        {message ? <p className="text-sm text-[#9ee7cf]">{message}</p> : null}
+        {writeError ? <p className="text-sm text-[#ff8d8d]">{writeError.message}</p> : null}
+        {hash ? (
+          <a
+            href={`https://basescan.org/tx/${hash}`}
+            target="_blank"
+            rel="noreferrer"
+            className="block truncate text-sm text-[#9ee7cf] underline-offset-4 hover:underline"
+          >
+            {hash}
+          </a>
+        ) : null}
+      </div>
     </main>
   );
 }
 
-function Metric({ label, value, compact = false }: { label: string; value: string; compact?: boolean }) {
-  return (
-    <div className={`rounded-[8px] border border-white/10 bg-white/[0.035] ${compact ? "p-3" : "p-4"}`}>
-      <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-white/38">{label}</p>
-      <p className="mt-2 min-w-0 truncate text-lg font-semibold text-white">{value}</p>
-    </div>
-  );
-}
-
-function Panel({
-  id,
-  icon,
-  title,
-  children,
-}: {
-  id?: string;
-  icon: React.ReactNode;
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section id={id} className="rounded-[8px] border border-white/10 bg-[#101216] p-5">
-      <div className="mb-4 flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.055] text-white/70">{icon}</div>
-        <h2 className="text-base font-semibold text-white">{title}</h2>
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function WalletOption({ label, onClick }: { label: string; onClick: () => void }) {
+function WalletButton({ label, disabled, onClick }: { label: string; disabled: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={onClick}
-      className="flex h-12 w-full items-center justify-between rounded-[8px] px-3 text-sm font-semibold text-white transition hover:bg-white/[0.07]"
+      className="h-12 rounded-[8px] bg-white px-4 text-sm font-semibold text-black transition hover:bg-white/90 disabled:cursor-not-allowed disabled:bg-white/30"
     >
-      <span>{label}</span>
-      <ArrowRight className="h-4 w-4 text-white/45" />
+      {label}
     </button>
+  );
+}
+
+function ActionButton({
+  children,
+  disabled,
+  onClick,
+}: {
+  children: React.ReactNode;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => void onClick()}
+      className="h-11 rounded-[8px] border border-white/10 bg-white/[0.05] text-sm font-semibold hover:bg-white/[0.09] disabled:cursor-not-allowed disabled:text-white/35"
+    >
+      {children}
+    </button>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[8px] border border-white/10 bg-white/[0.035] p-3">
+      <p className="text-xs text-white/40">{label}</p>
+      <p className="mt-1 font-semibold">{value}</p>
+    </div>
   );
 }
