@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { isAddress, zeroAddress } from "viem";
+import { concatHex, encodeFunctionData, isAddress, zeroAddress, type Hex } from "viem";
 import {
   type Connector,
   useAccount,
@@ -9,9 +9,10 @@ import {
   useDisconnect,
   useReadContract,
   useReadContracts,
+  useSendCalls,
+  useSendTransaction,
   useSwitchChain,
   useWaitForTransactionReceipt,
-  useWriteContract,
 } from "wagmi";
 import { basePassDailyAbi } from "@/abi/basePassDaily";
 import { config, contractAddress, dataSuffix } from "@/lib/wagmi";
@@ -75,7 +76,7 @@ function connectorMatches(connector: Connector, kind: WalletKind) {
   const name = connector.name.toLowerCase();
   if (kind === "okx") return id.includes("okx") || name.includes("okx");
   if (kind === "metamask") return id.includes("metamask") || name.includes("metamask");
-  return id.includes("coinbase") || name.includes("coinbase");
+  return id.includes("coinbase") || name.includes("coinbase") || id.includes("baseaccount") || name.includes("base account");
 }
 
 function isInjectedFallback(connector: Connector) {
@@ -106,11 +107,22 @@ export default function Home() {
   const { connectAsync, connectors, error: connectError, isPending: isConnecting } = useConnect();
   const { disconnect } = useDisconnect();
   const { switchChainAsync } = useSwitchChain();
-  const { writeContract, data: hash, error: writeError, isPending: isWriting } = useWriteContract();
+  const {
+    sendCallsAsync,
+    data: callsResult,
+    error: sendCallsError,
+    isPending: isSendingCalls,
+  } = useSendCalls({ config });
+  const {
+    sendTransactionAsync,
+    data: hash,
+    error: sendTransactionError,
+    isPending: isSendingTransaction,
+  } = useSendTransaction({ config });
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ config, hash });
 
   const isOnchain = Boolean(contractAddress);
-  const isBusy = isConnecting || isWriting || isConfirming;
+  const isBusy = isConnecting || isSendingCalls || isSendingTransaction || isConfirming;
 
   useEffect(() => {
     queueMicrotask(() => setOrigin(window.location.origin));
@@ -246,6 +258,31 @@ export default function Home() {
     await switchChainAsync({ chainId: 8453 });
   }
 
+  async function sendAttributedContractCall(callData: Hex) {
+    if (!contractAddress) return;
+    await ensureBase();
+
+    try {
+      const result = await sendCallsAsync({
+        calls: [{ to: contractAddress, data: callData }],
+        capabilities: { dataSuffix: { value: dataSuffix } },
+        chainId: 8453,
+        experimental_fallback: true,
+      });
+      setMessage(`Call submitted: ${result.id}`);
+      return;
+    } catch (error) {
+      setMessage("Smart wallet batch failed. Opening wallet transaction...");
+      console.info("wallet_sendCalls failed, falling back to sendTransaction", error);
+    }
+
+    await sendTransactionAsync({
+      to: contractAddress,
+      data: concatHex([callData, dataSuffix]),
+      chainId: 8453,
+    });
+  }
+
   async function claimDailyPass() {
     if (!address || stats.claimedToday) return;
     setMessage("Claiming Daily Pass...");
@@ -266,14 +303,13 @@ export default function Home() {
       return;
     }
 
-    await ensureBase();
-    writeContract({
-      address: contractAddress,
-      abi: basePassDailyAbi,
-      functionName: "claimDailyPass",
-      args: [referrer],
-      dataSuffix,
-    });
+    await sendAttributedContractCall(
+      encodeFunctionData({
+        abi: basePassDailyAbi,
+        functionName: "claimDailyPass",
+        args: [referrer],
+      }),
+    );
   }
 
   async function redeemReward(rewardId: number) {
@@ -297,14 +333,13 @@ export default function Home() {
       return;
     }
 
-    await ensureBase();
-    writeContract({
-      address: contractAddress,
-      abi: basePassDailyAbi,
-      functionName: "redeemReward",
-      args: [BigInt(rewardId)],
-      dataSuffix,
-    });
+    await sendAttributedContractCall(
+      encodeFunctionData({
+        abi: basePassDailyAbi,
+        functionName: "redeemReward",
+        args: [BigInt(rewardId)],
+      }),
+    );
   }
 
   async function enterRaffle() {
@@ -322,14 +357,13 @@ export default function Home() {
       return;
     }
 
-    await ensureBase();
-    writeContract({
-      address: contractAddress,
-      abi: basePassDailyAbi,
-      functionName: "enterRaffle",
-      args: [1n],
-      dataSuffix,
-    });
+    await sendAttributedContractCall(
+      encodeFunctionData({
+        abi: basePassDailyAbi,
+        functionName: "enterRaffle",
+        args: [1n],
+      }),
+    );
   }
 
   return (
@@ -360,7 +394,8 @@ export default function Home() {
 
           {message ? <p className="text-sm text-[#9ee7cf]">{message}</p> : null}
           {connectError ? <p className="text-sm text-[#ff8d8d]">{connectError.message}</p> : null}
-          {writeError ? <p className="text-sm text-[#ff8d8d]">{writeError.message}</p> : null}
+          {sendCallsError ? <p className="text-sm text-[#ff8d8d]">{sendCallsError.message}</p> : null}
+          {sendTransactionError ? <p className="text-sm text-[#ff8d8d]">{sendTransactionError.message}</p> : null}
         </section>
 
         <section className="grid grid-cols-2 gap-2">
@@ -434,6 +469,8 @@ export default function Home() {
             Transaction: {hash}
           </a>
         ) : null}
+
+        {callsResult?.id ? <p className="break-all text-xs text-white/45">Call batch: {callsResult.id}</p> : null}
       </div>
     </main>
   );

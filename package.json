@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint",
     "abi": "node scripts/extract-abi.mjs"
   },
@@ -14,6 +15,7 @@
     "@tanstack/react-query": "^5.101.3",
     "lucide-react": "^1.25.0",
     "next": "16.2.10",
+    "ox": "^1.0.3",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "viem": "^2.55.4",

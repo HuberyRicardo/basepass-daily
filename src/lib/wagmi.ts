@@ -1,6 +1,7 @@
-import { createConfig, http } from "wagmi";
+import { cookieStorage, createConfig, createStorage, http } from "wagmi";
 import { base } from "wagmi/chains";
-import { coinbaseWallet, injected } from "wagmi/connectors";
+import { baseAccount, coinbaseWallet, injected } from "wagmi/connectors";
+import { Attribution } from "ox/erc8021";
 import type { EIP1193Provider } from "viem";
 
 type WalletProvider = EIP1193Provider & {
@@ -26,9 +27,12 @@ export const contractAddress = (
 ) as `0x${string}` | undefined;
 
 const envDataSuffix = process.env.NEXT_PUBLIC_DATA_SUFFIX;
+const builderCode = process.env.NEXT_PUBLIC_BUILDER_CODE ?? "bc_q741sz3e";
 
 export const dataSuffix = (
-  envDataSuffix && /^0x[0-9a-fA-F]*$/.test(envDataSuffix) ? envDataSuffix : "0x"
+  envDataSuffix && /^0x[0-9a-fA-F]*$/.test(envDataSuffix)
+    ? envDataSuffix
+    : Attribution.toDataSuffix({ codes: [builderCode] })
 ) as `0x${string}`;
 
 type InjectedWindow = {
@@ -84,14 +88,25 @@ export const injectedFallbackConnector = injected({
 
 export const coinbaseConnector = coinbaseWallet({
   appName: "BasePass Daily",
-  preference: { options: "eoaOnly" },
+  preference: {
+    options: "all",
+    attribution: { dataSuffix },
+  },
+});
+
+export const baseAccountConnector = baseAccount({
+  appName: "BasePass Daily",
+  preference: {
+    options: "all",
+  },
 });
 
 export const config = createConfig({
   chains: [base],
-  connectors: [okxConnector, metaMaskConnector, injectedFallbackConnector, coinbaseConnector],
+  connectors: [okxConnector, metaMaskConnector, injectedFallbackConnector, coinbaseConnector, baseAccountConnector],
   multiInjectedProviderDiscovery: false,
   ssr: true,
+  storage: createStorage({ storage: cookieStorage }),
   transports: {
     [base.id]: http(),
   },
