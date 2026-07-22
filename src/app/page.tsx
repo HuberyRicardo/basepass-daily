@@ -395,7 +395,7 @@ export default function Home() {
     );
   }
 
-  const mainButtonLabel = !isConnected ? "Connect Wallet" : claimedToday ? "Claimed Today" : "Claim Daily Pass";
+  const mainButtonLabel = !isConnected ? "Choose Wallet" : claimedToday ? "Claimed Today" : "Claim Daily Pass";
   const isBusy = isConnecting || isWriting || isConfirming;
 
   return (
@@ -448,6 +448,7 @@ export default function Home() {
 
             <button
               type="button"
+              data-testid="primary-wallet-action"
               disabled={(isConnected && claimedToday) || isBusy}
               onClick={() => (isConnected ? void claimPass() : setShowWallets(true))}
               className="mt-6 flex h-14 w-full items-center justify-center gap-2 rounded-[8px] bg-[#f4f7fb] px-5 text-sm font-semibold text-[#08090c] transition hover:bg-white disabled:cursor-not-allowed disabled:bg-white/18 disabled:text-white/45"
@@ -458,6 +459,7 @@ export default function Home() {
 
             {showWallets ? (
               <div className="mt-3 rounded-[8px] border border-white/10 bg-black/30 p-2">
+                <p className="px-3 pb-2 pt-1 text-xs font-medium text-white/45">Choose one wallet below.</p>
                 <WalletOption label="OKX Wallet" onClick={() => connectWallet("okx")} />
                 <WalletOption label="MetaMask" onClick={() => connectWallet("metamask")} />
                 <WalletOption label="Coinbase Wallet" onClick={() => connectWallet("coinbase")} />
