@@ -84,6 +84,14 @@ function isInjectedFallback(connector: Connector) {
   return id.includes("injectedwallet") || name.includes("injected wallet");
 }
 
+function friendlyWalletError(error: unknown) {
+  if (!(error instanceof Error)) return "Wallet connection failed.";
+  if (error.message.toLowerCase().includes("user rejected")) {
+    return "Connection was canceled in the wallet. Open MetaMask and approve the request to continue.";
+  }
+  return error.message;
+}
+
 export default function Home() {
   const [message, setMessage] = useState("");
   const [origin, setOrigin] = useState("");
@@ -226,10 +234,10 @@ export default function Home() {
     }
 
     try {
-      await connectAsync({ connector, chainId: 8453 });
+      await connectAsync({ connector });
       setMessage(`${label} connected.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Wallet connection failed.");
+      setMessage(friendlyWalletError(error));
     }
   }
 
