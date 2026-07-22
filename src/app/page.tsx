@@ -24,7 +24,7 @@ import {
   useWriteContract,
 } from "wagmi";
 import { basePassDailyAbi } from "@/abi/basePassDaily";
-import { config, contractAddress, dataSuffix } from "@/lib/wagmi";
+import { coinbaseConnector, config, contractAddress, dataSuffix, metaMaskConnector, okxConnector } from "@/lib/wagmi";
 
 type Reward = {
   id: number;
@@ -43,6 +43,13 @@ type LocalStats = {
   raffleEntries: number;
   claimedReferral: boolean;
   rewardStock: Record<string, number>;
+};
+
+type InjectedWalletProvider = {
+  isMetaMask?: true;
+  isOkxWallet?: true;
+  isOKExWallet?: true;
+  providers?: InjectedWalletProvider[];
 };
 
 const emptyLocalStats: LocalStats = {
@@ -105,6 +112,7 @@ function numberPoints(value?: number) {
 
 export default function Home() {
   const [localStats, setLocalStats] = useState<LocalStats>(emptyLocalStats);
+  const [walletMessage, setWalletMessage] = useState("");
   const [referrer] = useState<`0x${string}`>(() => {
     if (typeof window === "undefined") return zeroAddress;
     const value = new URLSearchParams(window.location.search).get("ref");
@@ -112,7 +120,7 @@ export default function Home() {
   });
   const [origin] = useState(() => (typeof window === "undefined" ? "" : window.location.origin));
   const { address, chainId, isConnected } = useAccount();
-  const { connect, connectors, error: connectError, isPending: isConnecting } = useConnect();
+  const { connectAsync, error: connectError, isPending: isConnecting } = useConnect();
   const { disconnect } = useDisconnect();
   const { switchChainAsync } = useSwitchChain();
   const { writeContract, data: hash, isPending: isWriting, error: writeError, reset } = useWriteContract();
@@ -377,27 +385,39 @@ export default function Home() {
     });
   }
 
-  function findConnector(kind: "okx" | "metamask" | "coinbase") {
-    if (kind === "coinbase") {
-      return connectors.find((connector) => connector.id === "coinbaseWalletSDK" || connector.name === "Coinbase Wallet");
-    }
-
-    if (kind === "okx") {
-      return connectors.find((connector) => connector.id === "okxWallet" || connector.name === "OKX Wallet");
-    }
-
-    return connectors.find((connector) => connector.id === "metaMask" || connector.name === "MetaMask");
+  function hasInjectedWallet(kind: "okx" | "metamask") {
+    if (typeof window === "undefined") return false;
+    const injectedWindow = window as typeof window & {
+      ethereum?: InjectedWalletProvider;
+      okxwallet?: InjectedWalletProvider;
+    };
+    if (kind === "okx" && injectedWindow.okxwallet) return true;
+    const ethereum = injectedWindow.ethereum;
+    const providers = ethereum?.providers ?? [];
+    const allProviders = ethereum ? [ethereum, ...providers] : providers;
+    return allProviders.some((provider) =>
+      kind === "okx"
+        ? provider.isOkxWallet === true || provider.isOKExWallet === true
+        : provider.isMetaMask === true,
+    );
   }
 
-  function connectWallet(kind: "okx" | "metamask" | "coinbase") {
-    const connector = findConnector(kind);
-    if (!connector) return;
-    connect(
-      { connector, chainId: 8453 },
-      {
-        onError: (error) => console.error(error),
-      },
-    );
+  async function connectWallet(kind: "okx" | "metamask" | "coinbase") {
+    setWalletMessage("");
+
+    if (kind !== "coinbase" && !hasInjectedWallet(kind)) {
+      setWalletMessage(`${kind === "okx" ? "OKX Wallet" : "MetaMask"} was not detected in this browser.`);
+      return;
+    }
+
+    const connector = kind === "okx" ? okxConnector : kind === "metamask" ? metaMaskConnector : coinbaseConnector;
+
+    try {
+      await connectAsync({ connector, chainId: 8453 });
+      setWalletMessage("");
+    } catch (error) {
+      setWalletMessage(error instanceof Error ? error.message : "Wallet connection failed.");
+    }
   }
 
   const mainButtonLabel = !isConnected ? "Connect a Wallet Below" : claimedToday ? "Claimed Today" : "Claim Daily Pass";
@@ -477,6 +497,7 @@ export default function Home() {
             ) : null}
             {writeError ? <p className="mt-3 text-xs leading-5 text-[#ff8d8d]">{writeError.message}</p> : null}
             {connectError ? <p className="mt-3 text-xs leading-5 text-[#ff8d8d]">{connectError.message}</p> : null}
+            {walletMessage ? <p className="mt-3 text-xs leading-5 text-[#ff8d8d]">{walletMessage}</p> : null}
             {hash ? (
               <a
                 href={`https://basescan.org/tx/${hash}`}

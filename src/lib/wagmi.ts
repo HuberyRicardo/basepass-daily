@@ -67,7 +67,7 @@ export const metaMaskConnector = injected({
 
 export const coinbaseConnector = coinbaseWallet({
   appName: "BasePass Daily",
-  preference: "extensionOnly",
+  preference: "all",
 });
 
 export const config = createConfig({
