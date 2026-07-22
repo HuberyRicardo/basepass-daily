@@ -76,7 +76,7 @@ export const injectedFallbackConnector = injected({
 
 export const coinbaseConnector = coinbaseWallet({
   appName: "BasePass Daily",
-  preference: "all",
+  preference: { options: "eoaOnly" },
 });
 
 export const config = createConfig({
