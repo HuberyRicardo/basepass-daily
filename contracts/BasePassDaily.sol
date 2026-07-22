@@ -71,7 +71,6 @@ contract BasePassDaily {
 
     error NotOwner();
     error ContractPaused();
-    error AlreadyClaimedToday();
     error InvalidReward();
     error RewardInactive();
     error RewardOutOfStock();
@@ -97,7 +96,6 @@ contract BasePassDaily {
 
     function claimDailyPass(address referrer) external whenNotPaused {
         uint256 today = block.timestamp / 1 days;
-        if (lastCheckInDay[msg.sender] == today) revert AlreadyClaimedToday();
 
         uint256 pointsAwarded = dailyPassPoints;
         if (lastCheckInDay[msg.sender] + 1 == today) {

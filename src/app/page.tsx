@@ -300,7 +300,7 @@ export default function Home() {
   }
 
   async function claimDailyPass() {
-    if (!address || stats.claimedToday) return;
+    if (!address) return;
     setMessage("Claiming Daily Pass...");
 
     if (!isOnchain || !contractAddress) {
@@ -424,11 +424,11 @@ export default function Home() {
         <section className="space-y-3 rounded-[8px] border border-white/10 bg-[#101216] p-4">
           <button
             type="button"
-            disabled={!isConnected || stats.claimedToday || isBusy}
+            disabled={!isConnected || isBusy}
             onClick={() => void claimDailyPass()}
             className="primary-button"
           >
-            {stats.claimedToday ? "Claimed Today" : "Claim Daily Pass"}
+            Claim Daily Pass
           </button>
           <p className="text-xs text-white/45">{isOnchain ? "Onchain mode: user pays Base gas." : "Local mode: no gas required."}</p>
         </section>

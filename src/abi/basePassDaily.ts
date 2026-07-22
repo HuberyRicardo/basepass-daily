@@ -6,11 +6,6 @@ export const basePassDailyAbi = [
   },
   {
     "inputs": [],
-    "name": "AlreadyClaimedToday",
-    "type": "error"
-  },
-  {
-    "inputs": [],
     "name": "ContractPaused",
     "type": "error"
   },
