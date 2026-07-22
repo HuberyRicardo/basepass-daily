@@ -29,3 +29,47 @@ button,
 a {
   -webkit-tap-highlight-color: transparent;
 }
+
+.primary-button {
+  height: 44px;
+  width: 100%;
+  border-radius: 8px;
+  background: #f4f7fb;
+  color: #08090c;
+  font-size: 14px;
+  font-weight: 700;
+  transition: opacity 160ms ease, background 160ms ease;
+}
+
+.primary-button:hover {
+  background: #ffffff;
+}
+
+.primary-button:disabled,
+.secondary-button:disabled,
+.small-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.secondary-button {
+  height: 44px;
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  background: rgb(255 255 255 / 0.05);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.small-button {
+  min-width: 76px;
+  border-radius: 8px;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  background: rgb(255 255 255 / 0.07);
+  color: #ffffff;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
